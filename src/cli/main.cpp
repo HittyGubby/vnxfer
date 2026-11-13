@@ -377,7 +377,7 @@ int run_action(const std::string& cmd, const Options& opts) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
+    if (argc < 3 || argv[2][0] == '-') {
         usage();
         return 2;
     }
