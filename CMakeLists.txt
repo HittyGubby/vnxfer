@@ -49,6 +49,9 @@ add_library(vnxfer_core
 )
 target_include_directories(vnxfer_core PUBLIC src)
 target_link_libraries(vnxfer_core PUBLIC OpenSSL::Crypto ZLIB::ZLIB)
+if(WIN32)
+  target_link_libraries(vnxfer_core PUBLIC ws2_32)
+endif()
 
 add_executable(vnxfer src/cli/main.cpp)
 target_link_libraries(vnxfer PRIVATE vnxfer_core)

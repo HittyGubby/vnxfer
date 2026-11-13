@@ -6,6 +6,12 @@
 
 namespace vnxfer {
 
+#ifdef _WIN32
+using socket_handle = std::uintptr_t;
+#else
+using socket_handle = int;
+#endif
+
 // Minimal blocking TCP socket with absolute read/write deadlines.
 class Socket {
 public:
@@ -25,11 +31,12 @@ public:
     void set_timeout(int ms);
     void close();
 
-    bool valid() const { return fd_ >= 0; }
-    int fd() const { return fd_; }
+    bool valid() const { return fd_ != kInvalid; }
+    socket_handle fd() const { return fd_; }
 
 private:
-    int fd_ = -1;
+    static constexpr socket_handle kInvalid = static_cast<socket_handle>(-1);
+    socket_handle fd_ = kInvalid;
     int timeout_ms_ = 5000;
 };
 
