@@ -1,5 +1,9 @@
 #include "gui/session_worker.h"
 
+#include "core/ft/backend.h"
+#include "core/rfb_client.h"
+#include "core/rfb_protocol.h"
+
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QFile>
@@ -95,6 +99,48 @@ void SessionWorker::pingOnce() {
 }
 
 void SessionWorker::setRateLimit(int bytesPerSecond) { rate_limit_ = bytesPerSecond; }
+
+void SessionWorker::probe(const QString& host, quint16 port, const QString& password) {
+    QString report;
+    try {
+        vnxfer::RfbClient client(host.toStdString(), port, password.toStdString(), 5000);
+        client.connect();
+        client.handshake(8, true);
+        report += QString("banner: %1\n").arg(QString::fromStdString(client.server_version()));
+        report += QString("server: %1x%2 \"%3\"\n")
+                      .arg(client.server_info().width)
+                      .arg(client.server_info().height)
+                      .arg(QString::fromStdString(client.server_info().name));
+
+        bool found = false;
+        if (client.caps().present &&
+            client.caps().hasClient(vnxfer::rfb::kTv2CompressionSupportRequest)) {
+            auto r = vnxfer::ft::probe_tightvnc2(client);
+            report += QString("file transfer: tightvnc2 (%1)\n")
+                          .arg(QString::fromStdString(r.detail));
+            found = true;
+        } else if (client.caps().present &&
+                   client.caps().hasClient(vnxfer::rfb::kTv13FileListRequest)) {
+            auto r = vnxfer::ft::probe_tightvnc13(client);
+            report += QString("file transfer: tightvnc1.3 (%1)\n")
+                          .arg(QString::fromStdString(r.detail));
+            found = true;
+        }
+        if (!found) {
+            client.socket().close();
+            vnxfer::RfbClient plain(host.toStdString(), port, password.toStdString(), 5000);
+            plain.connect();
+            plain.handshake(8, false);
+            auto r = vnxfer::ft::probe_ultravnc(plain);
+            report += QString("file transfer: %1 (%2)\n")
+                          .arg(QString::fromStdString(vnxfer::ft::to_string(r.kind)))
+                          .arg(QString::fromStdString(r.detail));
+        }
+    } catch (const std::exception& e) {
+        report += QString("probe failed: %1").arg(QString::fromUtf8(e.what()));
+    }
+    emit probeResult(report);
+}
 
 void SessionWorker::list(const QString& path) {
     guarded("list", [&] {

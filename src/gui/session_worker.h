@@ -43,6 +43,7 @@ public slots:
     void removePath(const QString& path);
     void renamePath(const QString& from, const QString& to);
     void setRateLimit(int bytesPerSecond);
+    void probe(const QString& host, quint16 port, const QString& password);
     void verifyUpload(const QString& local, const QString& remote);
     void cancel();
 
@@ -55,6 +56,7 @@ signals:
     void logged(const QString& line);
     void verified(const QString& remote, bool ok, const QString& detail);
     void capabilitiesReady(const QString& text);
+    void probeResult(const QString& text);
 
 private:
     template <typename Fn>

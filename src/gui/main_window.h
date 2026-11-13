@@ -51,6 +51,9 @@ private slots:
     void toggleHidden(bool show);
     void configureRateLimit();
     void showConnectionInfo();
+    void onProbeClicked();
+    void applyProfile(int index);
+    void saveProfile();
     void onVerified(const QString& remote, bool ok, const QString& detail);
     void uploadSelected();
     void downloadSelected();
@@ -95,6 +98,9 @@ private:
     QLineEdit* password_ = nullptr;
     QCheckBox* remember_ = nullptr;
     QPushButton* connect_ = nullptr;
+    QPushButton* probe_ = nullptr;
+    QComboBox* profileBox_ = nullptr;
+    QPushButton* saveProfile_ = nullptr;
 
     QLineEdit* localPathEdit_ = nullptr;
     QPushButton* localUp_ = nullptr;

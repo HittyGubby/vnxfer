@@ -39,6 +39,7 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 
+#include "gui/keyring.h"
 #include "gui/session_worker.h"
 
 namespace {
@@ -206,9 +207,17 @@ void MainWindow::buildUi() {
     top->addWidget(password_);
     remember_ = new QCheckBox("remember");
     top->addWidget(remember_);
+    probe_ = new QPushButton("Probe");
+    top->addWidget(probe_);
     connect_ = new QPushButton("Connect");
     top->addWidget(connect_);
     top->addStretch();
+    profileBox_ = new QComboBox();
+    profileBox_->setMinimumWidth(140);
+    profileBox_->addItem("Profiles");
+    saveProfile_ = new QPushButton("Save profile");
+    top->addWidget(profileBox_);
+    top->addWidget(saveProfile_);
     root->addLayout(top);
 
     auto* splitter = new QSplitter(Qt::Horizontal);
@@ -322,6 +331,12 @@ void MainWindow::buildUi() {
     });
 
     connect(connect_, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
+    connect(probe_, &QPushButton::clicked, this, &MainWindow::onProbeClicked);
+    connect(saveProfile_, &QPushButton::clicked, this, &MainWindow::saveProfile);
+    connect(profileBox_, QOverload<int>::of(&QComboBox::activated), this, &MainWindow::applyProfile);
+    connect(worker_, &SessionWorker::probeResult, this, [this](const QString& text) {
+        QMessageBox::information(this, "Probe", text);
+    });
     connect(cancelJob_, &QPushButton::clicked, this, [this] {
         jobs_.clear();
         jobList_->clear();
@@ -411,10 +426,19 @@ void MainWindow::onConnectClicked() {
 
     QSettings settings;
     if (remember_->isChecked()) {
-        settings.setValue("passwords/" + endpoint(),
-                          QString::fromLatin1(password_->text().toUtf8().toBase64()));
+        bool stored = false;
+        if (vnxfer::keyring::available()) {
+            stored = vnxfer::keyring::store(endpoint(), password_->text());
+        }
+        if (stored) {
+            settings.remove("passwords/" + endpoint());
+        } else {
+            settings.setValue("passwords/" + endpoint(),
+                              QString::fromLatin1(password_->text().toUtf8().toBase64()));
+        }
     } else {
         settings.remove("passwords/" + endpoint());
+        if (vnxfer::keyring::available()) vnxfer::keyring::remove(endpoint());
     }
 
     status_->setText("Connecting to " + endpoint() + " ...");
@@ -572,6 +596,52 @@ void MainWindow::localGoUp() {
 void MainWindow::refreshLocal() {
     localModel_->setRootPath(localRoot_);
     localView_->setRootIndex(localModel_->index(localRoot_));
+}
+
+void MainWindow::onProbeClicked() {
+    const QString host = history_->currentText().trimmed();
+    if (host.isEmpty()) return;
+    status_->setText("probing " + endpoint() + " ...");
+    QMetaObject::invokeMethod(worker_, "probe", Qt::QueuedConnection, Q_ARG(QString, host),
+                              Q_ARG(quint16, static_cast<quint16>(port_->value())),
+                              Q_ARG(QString, password_->text()));
+}
+
+void MainWindow::applyProfile(int index) {
+    if (index <= 0) return;
+    QSettings settings;
+    const QStringList profiles = settings.value("profiles").toStringList();
+    if (index - 1 >= profiles.size()) return;
+    const QStringList parts = profiles[index - 1].split('|');
+    if (parts.size() < 4) return;
+    history_->setCurrentText(parts[0]);
+    port_->setValue(parts[1].toInt());
+    initialPath_ = parts[3];
+    status_->setText("profile: " + parts[4]);
+}
+
+void MainWindow::saveProfile() {
+    const QString host = history_->currentText().trimmed();
+    if (host.isEmpty()) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, "Save profile", "Name:", QLineEdit::Normal,
+                                               host, &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    const QString entry = QString("%1|%2|%3|%4|%5")
+                              .arg(host)
+                              .arg(port_->value())
+                              .arg(QString())
+                              .arg(remoteRoot_)
+                              .arg(name.trimmed());
+    QSettings settings;
+    QStringList profiles = settings.value("profiles").toStringList();
+    profiles.erase(std::remove_if(profiles.begin(), profiles.end(),
+                                  [&](const QString& p) { return p.endsWith("|" + name.trimmed()); }),
+                   profiles.end());
+    profiles.prepend(entry);
+    settings.setValue("profiles", profiles);
+    profileBox_->addItem(name.trimmed());
+    status_->setText("profile saved");
 }
 
 void MainWindow::configureRateLimit() {
@@ -866,15 +936,30 @@ void MainWindow::loadSettings() {
     remember_->setChecked(settings.value("remember", false).toBool());
     showHidden_ = settings.value("showHidden", false).toBool();
 
-    const QByteArray saved = settings.value("passwords/" + endpoint()).toByteArray();
-    if (!saved.isEmpty()) password_->setText(QString::fromUtf8(QByteArray::fromBase64(saved)));
+    QString savedPassword;
+    if (vnxfer::keyring::available()) savedPassword = vnxfer::keyring::lookup(endpoint());
+    if (savedPassword.isEmpty()) {
+        const QByteArray saved = settings.value("passwords/" + endpoint()).toByteArray();
+        if (!saved.isEmpty()) savedPassword = QString::fromUtf8(QByteArray::fromBase64(saved));
+    }
+    password_->setText(savedPassword);
+
+    profileBox_->clear();
+    profileBox_->addItem("Profiles");
+    for (const QString& p : settings.value("profiles").toStringList()) {
+        const QStringList parts = p.split('|');
+        if (parts.size() >= 5) profileBox_->addItem(parts[4]);
+    }
 
     connect(history_, &QComboBox::currentTextChanged, this, [this](const QString&) {
         QSettings s;
-        const QByteArray savedPw = s.value("passwords/" + endpoint()).toByteArray();
-        if (!savedPw.isEmpty()) {
-            password_->setText(QString::fromUtf8(QByteArray::fromBase64(savedPw)));
+        QString pw;
+        if (vnxfer::keyring::available()) pw = vnxfer::keyring::lookup(endpoint());
+        if (pw.isEmpty()) {
+            const QByteArray savedPw = s.value("passwords/" + endpoint()).toByteArray();
+            if (!savedPw.isEmpty()) pw = QString::fromUtf8(QByteArray::fromBase64(savedPw));
         }
+        if (!pw.isEmpty()) password_->setText(pw);
     });
 }
 

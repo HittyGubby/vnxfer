@@ -14,7 +14,16 @@ add_compile_options(-Wall -Wextra -Wno-deprecated-declarations)
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
+find_package(PkgConfig QUIET)
 set(CMAKE_AUTOMOC ON)
+
+set(VNXFER_HAVE_LIBSECRET OFF)
+if(PkgConfig_FOUND)
+  pkg_check_modules(LIBSECRET QUIET libsecret-1)
+  if(LIBSECRET_FOUND)
+    set(VNXFER_HAVE_LIBSECRET ON)
+  endif()
+endif()
 
 add_library(vnxfer_core
   src/core/socket.cpp
@@ -39,5 +48,12 @@ add_executable(vnxfer-gui
   src/gui/main.cpp
   src/gui/main_window.cpp
   src/gui/session_worker.cpp
+  src/gui/keyring.cpp
 )
 target_link_libraries(vnxfer-gui PRIVATE vnxfer_core Qt6::Widgets)
+if(VNXFER_HAVE_LIBSECRET)
+  target_compile_definitions(vnxfer-gui PRIVATE VNXFER_HAVE_LIBSECRET=1)
+  target_include_directories(vnxfer-gui PRIVATE ${LIBSECRET_INCLUDE_DIRS})
+  target_link_libraries(vnxfer-gui PRIVATE ${LIBSECRET_LIBRARIES})
+  target_link_directories(vnxfer-gui PRIVATE ${LIBSECRET_LIBRARY_DIRS})
+endif()
