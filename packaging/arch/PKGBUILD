@@ -1,0 +1,24 @@
+# Maintainer: vnxfer
+pkgname=vnxfer
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="VNC file transfer client for TightVNC and UltraVNC"
+arch=('x86_64')
+url="https://github.com/hittygubby/vnxfer"
+license=('GPL-2.0-or-later')
+depends=('qt6-base' 'openssl' 'zlib')
+optdepends=('libsecret: store passwords in the system keyring')
+makedepends=('cmake' 'pkgconf')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S "$srcdir/$pkgname-$pkgver" -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build -j"$(nproc)"
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(vnxfer LANGUAGES CXX)
+project(vnxfer VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,15 @@ if(PkgConfig_FOUND)
   endif()
 endif()
 
+set(CPACK_PACKAGE_NAME vnxfer)
+set(CPACK_PACKAGE_VENDOR "vnxfer")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "VNC file transfer client for TightVNC and UltraVNC")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR "TGZ;DEB;RPM")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "vnxfer")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6widgets6, libssl3, zlib1g")
+set(CPACK_RPM_PACKAGE_REQUIRES "qt6-qtbase, openssl-libs, zlib")
+
 add_library(vnxfer_core
   src/core/socket.cpp
   src/core/des.cpp
@@ -44,6 +53,10 @@ target_link_libraries(vnxfer_core PUBLIC OpenSSL::Crypto ZLIB::ZLIB)
 add_executable(vnxfer src/cli/main.cpp)
 target_link_libraries(vnxfer PRIVATE vnxfer_core)
 
+include(GNUInstallDirs)
+install(TARGETS vnxfer RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES packaging/vnxfer.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
 add_executable(vnxfer-gui
   src/gui/main.cpp
   src/gui/main_window.cpp
@@ -51,9 +64,12 @@ add_executable(vnxfer-gui
   src/gui/keyring.cpp
 )
 target_link_libraries(vnxfer-gui PRIVATE vnxfer_core Qt6::Widgets)
+install(TARGETS vnxfer-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(VNXFER_HAVE_LIBSECRET)
   target_compile_definitions(vnxfer-gui PRIVATE VNXFER_HAVE_LIBSECRET=1)
   target_include_directories(vnxfer-gui PRIVATE ${LIBSECRET_INCLUDE_DIRS})
   target_link_libraries(vnxfer-gui PRIVATE ${LIBSECRET_LIBRARIES})
   target_link_directories(vnxfer-gui PRIVATE ${LIBSECRET_LIBRARY_DIRS})
 endif()
+
+include(CPack)

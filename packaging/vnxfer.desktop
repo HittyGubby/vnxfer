@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=vnxfer
+Comment=VNC file transfer client (TightVNC / UltraVNC)
+Exec=vnxfer-gui
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=vnc;tighvnc;ultravnc;file transfer;
