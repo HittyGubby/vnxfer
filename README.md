@@ -30,7 +30,7 @@ cmake --build build -j
 - 限速：`Settings → Rate limit...`（KB/s，0 为不限）。
 - 校验：`Settings → Verify uploads (MD5)`，TightVNC 2.x 上传后自动比对。
 - 心跳：连接后每 45 秒发一次轻量请求，失败会在日志与状态栏提示。
-- 连接管理：历史下拉、`Probe` 探测协议、`Profiles` 保存常用主机、`Save profile`。
+- 连接管理：历史下拉本身就是 profile——每个记住的 host 自动保存端口、密码与上次路径，选中即恢复；`Settings → Forget this host / Clear history` 负责删除，`Probe` 连接前探测协议。
 - 密码：`remember` 时优先写入系统钥匙串（libsecret），不可用时退化为 QSettings base64（仅混淆）。
 - 视图：`View → Show hidden files`、`Language → English/中文`、`Theme → System/Fusion`。
 - 日志：底部 `Log` 停靠面板。

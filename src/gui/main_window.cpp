@@ -212,12 +212,6 @@ void MainWindow::buildUi() {
     connect_ = new QPushButton("Connect");
     top->addWidget(connect_);
     top->addStretch();
-    profileBox_ = new QComboBox();
-    profileBox_->setMinimumWidth(140);
-    profileBox_->addItem("Profiles");
-    saveProfile_ = new QPushButton("Save profile");
-    top->addWidget(profileBox_);
-    top->addWidget(saveProfile_);
     root->addLayout(top);
 
     auto* splitter = new QSplitter(Qt::Horizontal);
@@ -306,20 +300,28 @@ void MainWindow::buildUi() {
     setCentralWidget(central);
 
     auto* settingsMenu = menuBar()->addMenu("Settings");
-    auto* rateAction = settingsMenu->addAction("Rate limit...");
-    connect(rateAction, &QAction::triggered, this, &MainWindow::configureRateLimit);
-    auto* verifyAction = settingsMenu->addAction("Verify uploads (MD5)");
-    verifyAction->setCheckable(true);
-    verifyAction->setChecked(verifyUploads_);
-    connect(verifyAction, &QAction::toggled, this, [this](bool on) { verifyUploads_ = on; });
+    rateAction_ = settingsMenu->addAction("Rate limit...");
+    connect(rateAction_, &QAction::triggered, this, &MainWindow::configureRateLimit);
+    verifyAction_ = settingsMenu->addAction("Verify uploads (MD5)");
+    verifyAction_->setCheckable(true);
+    verifyAction_->setChecked(verifyUploads_);
+    connect(verifyAction_, &QAction::toggled, this, [this](bool on) { verifyUploads_ = on; });
+    forgetAction_ = settingsMenu->addAction("Forget this host");
+    connect(forgetAction_, &QAction::triggered, this, &MainWindow::forgetHost);
+    clearHistoryAction_ = settingsMenu->addAction("Clear history");
+    connect(clearHistoryAction_, &QAction::triggered, this, [this] {
+        QSettings().remove("history");
+        history_->clear();
+        status_->setText("history cleared");
+    });
     auto* connectionMenu = menuBar()->addMenu("Connection");
-    auto* infoAction = connectionMenu->addAction("Info");
-    connect(infoAction, &QAction::triggered, this, &MainWindow::showConnectionInfo);
+    infoAction_ = connectionMenu->addAction("Info");
+    connect(infoAction_, &QAction::triggered, this, &MainWindow::showConnectionInfo);
 
     auto* viewMenu = menuBar()->addMenu("View");
-    auto* hiddenAction = viewMenu->addAction("Show hidden files");
-    hiddenAction->setCheckable(true);
-    connect(hiddenAction, &QAction::toggled, this, &MainWindow::toggleHidden);
+    hiddenAction_ = viewMenu->addAction("Show hidden files");
+    hiddenAction_->setCheckable(true);
+    connect(hiddenAction_, &QAction::toggled, this, &MainWindow::toggleHidden);
     auto* languageMenu = viewMenu->addMenu("Language");
     auto* englishAction = languageMenu->addAction("English");
     auto* chineseAction = languageMenu->addAction("中文");
@@ -338,8 +340,6 @@ void MainWindow::buildUi() {
 
     connect(connect_, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(probe_, &QPushButton::clicked, this, &MainWindow::onProbeClicked);
-    connect(saveProfile_, &QPushButton::clicked, this, &MainWindow::saveProfile);
-    connect(profileBox_, QOverload<int>::of(&QComboBox::activated), this, &MainWindow::applyProfile);
     connect(worker_, &SessionWorker::probeResult, this, [this](const QString& text) {
         QMessageBox::information(this, "Probe", text);
     });
@@ -461,6 +461,8 @@ void MainWindow::onConnected(const QString& protocol, const QString& root) {
     status_->setText(QString("Connected: %1").arg(protocol));
     connect_->setText("Disconnect");
     addHistory(history_->currentText().trimmed());
+    QSettings().setValue("lastPath/" + endpoint(), remoteRoot_);
+    QSettings().setValue("lastPort/" + endpoint(), port_->value());
 
     remoteModel_->clear();
     remoteModel_->setHorizontalHeaderLabels({"Name", "Size", "Modified"});
@@ -612,7 +614,12 @@ void MainWindow::applyLanguage(bool chinese) {
     };
     connect_->setText(connected_ ? t("Disconnect", "断开") : t("Connect", "连接"));
     probe_->setText(t("Probe", "探测"));
-    saveProfile_->setText(t("Save profile", "保存配置"));
+    rateAction_->setText(t("Rate limit...", "限速..."));
+    verifyAction_->setText(t("Verify uploads (MD5)", "上传 MD5 校验"));
+    infoAction_->setText(t("Info", "信息"));
+    hiddenAction_->setText(t("Show hidden files", "显示隐藏文件"));
+    forgetAction_->setText(t("Forget this host", "忘记此主机"));
+    clearHistoryAction_->setText(t("Clear history", "清空历史"));
     upload_->setText(t("Upload →", "上传 →"));
     download_->setText(t("← Download", "← 下载"));
     newFolder_->setText(t("New folder", "新建文件夹"));
@@ -637,41 +644,23 @@ void MainWindow::onProbeClicked() {
                               Q_ARG(QString, password_->text()));
 }
 
-void MainWindow::applyProfile(int index) {
-    if (index <= 0) return;
-    QSettings settings;
-    const QStringList profiles = settings.value("profiles").toStringList();
-    if (index - 1 >= profiles.size()) return;
-    const QStringList parts = profiles[index - 1].split('|');
-    if (parts.size() < 4) return;
-    history_->setCurrentText(parts[0]);
-    port_->setValue(parts[1].toInt());
-    initialPath_ = parts[3];
-    status_->setText("profile: " + parts[4]);
-}
-
-void MainWindow::saveProfile() {
+void MainWindow::forgetHost() {
     const QString host = history_->currentText().trimmed();
     if (host.isEmpty()) return;
-    bool ok = false;
-    const QString name = QInputDialog::getText(this, "Save profile", "Name:", QLineEdit::Normal,
-                                               host, &ok);
-    if (!ok || name.trimmed().isEmpty()) return;
-    const QString entry = QString("%1|%2|%3|%4|%5")
-                              .arg(host)
-                              .arg(port_->value())
-                              .arg(QString())
-                              .arg(remoteRoot_)
-                              .arg(name.trimmed());
+    const QString ep = endpoint();
     QSettings settings;
-    QStringList profiles = settings.value("profiles").toStringList();
-    profiles.erase(std::remove_if(profiles.begin(), profiles.end(),
-                                  [&](const QString& p) { return p.endsWith("|" + name.trimmed()); }),
-                   profiles.end());
-    profiles.prepend(entry);
-    settings.setValue("profiles", profiles);
-    profileBox_->addItem(name.trimmed());
-    status_->setText("profile saved");
+    QStringList history = settings.value("history").toStringList();
+    history.removeAll(host);
+    settings.setValue("history", history);
+    settings.remove("passwords/" + ep);
+    settings.remove("lastPath/" + ep);
+    if (vnxfer::keyring::available()) vnxfer::keyring::remove(ep);
+
+    history_->blockSignals(true);
+    history_->clear();
+    history_->addItems(history);
+    history_->blockSignals(false);
+    status_->setText("forgot " + host);
 }
 
 void MainWindow::configureRateLimit() {
@@ -748,9 +737,27 @@ void MainWindow::enqueueUpload(const QString& local) {
     remote += info.fileName();
     if (info.isDir()) {
         enqueueJob({"upload-tree", local, remote, "↑ " + info.fileName() + "/"});
-    } else {
-        enqueueJob({"upload", local, remote, "↑ " + info.fileName()});
+        return;
     }
+
+    // If the remote file is already partially there, offer to continue it.
+    QStandardItem* item = findRemoteItem(remote);
+    quint64 remoteSize = 0;
+    if (item && !item->data(kDirRole).toBool()) {
+        const QModelIndex index = remoteModel_->indexFromItem(item);
+        remoteSize = index.sibling(index.row(), 1).data(kSortRole).toULongLong();
+    }
+    const quint64 localSize = static_cast<quint64>(info.size());
+    if (remoteSize > 0 && remoteSize < localSize) {
+        const auto answer = QMessageBox::question(
+            this, "Resume",
+            QString("Remote file has %1 of %2 bytes. Continue uploading?").arg(remoteSize).arg(localSize));
+        if (answer == QMessageBox::Yes) {
+            enqueueJob({"upload-resume", local, remote, "↻ " + info.fileName()});
+            return;
+        }
+    }
+    enqueueJob({"upload", local, remote, "↑ " + info.fileName()});
 }
 
 void MainWindow::enqueueJob(const TransferJob& job) {
@@ -785,6 +792,16 @@ void MainWindow::startNextJob() {
     } else if (job.kind == "download-tree") {
         QMetaObject::invokeMethod(worker_, "downloadTree", Qt::QueuedConnection,
                                   Q_ARG(QString, job.a), Q_ARG(QString, job.b));
+    } else if (job.kind == "upload-resume") {
+        QStandardItem* item = findRemoteItem(job.b);
+        quint64 offset = 0;
+        if (item) {
+            const QModelIndex index = remoteModel_->indexFromItem(item);
+            offset = index.sibling(index.row(), 1).data(kSortRole).toULongLong();
+        }
+        QMetaObject::invokeMethod(worker_, "uploadResume", Qt::QueuedConnection,
+                                  Q_ARG(QString, job.a), Q_ARG(QString, job.b),
+                                  Q_ARG(quint64, offset));
     } else if (job.kind == "download-resume") {
         const quint64 offset = static_cast<quint64>(QFileInfo(job.b).size());
         QMetaObject::invokeMethod(worker_, "downloadResume", Qt::QueuedConnection,
@@ -976,22 +993,25 @@ void MainWindow::loadSettings() {
     }
     password_->setText(savedPassword);
 
-    profileBox_->clear();
-    profileBox_->addItem("Profiles");
-    for (const QString& p : settings.value("profiles").toStringList()) {
-        const QStringList parts = p.split('|');
-        if (parts.size() >= 5) profileBox_->addItem(parts[4]);
-    }
 
-    connect(history_, &QComboBox::currentTextChanged, this, [this](const QString&) {
+    connect(history_, &QComboBox::currentTextChanged, this, [this](const QString& host) {
+        if (host.trimmed().isEmpty()) return;
         QSettings s;
+        // Each remembered host acts as its own profile: port, password and last path.
+        const QString base = QString("%1:%2").arg(host.trimmed()).arg(port_->value());
+        if (s.contains("lastPort/" + base)) {
+            port_->setValue(s.value("lastPort/" + base).toInt());
+        }
+        const QString ep = QString("%1:%2").arg(host.trimmed()).arg(port_->value());
         QString pw;
-        if (vnxfer::keyring::available()) pw = vnxfer::keyring::lookup(endpoint());
+        if (vnxfer::keyring::available()) pw = vnxfer::keyring::lookup(ep);
         if (pw.isEmpty()) {
-            const QByteArray savedPw = s.value("passwords/" + endpoint()).toByteArray();
+            const QByteArray savedPw = s.value("passwords/" + ep).toByteArray();
             if (!savedPw.isEmpty()) pw = QString::fromUtf8(QByteArray::fromBase64(savedPw));
         }
         if (!pw.isEmpty()) password_->setText(pw);
+        const QString lastPath = s.value("lastPath/" + ep).toString();
+        if (!lastPath.isEmpty()) initialPath_ = lastPath;
     });
 }
 

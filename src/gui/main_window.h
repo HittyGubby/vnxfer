@@ -12,6 +12,7 @@ class QComboBox;
 class QListWidget;
 class QPlainTextEdit;
 class QFileSystemModel;
+class QAction;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
@@ -52,8 +53,7 @@ private slots:
     void configureRateLimit();
     void showConnectionInfo();
     void onProbeClicked();
-    void applyProfile(int index);
-    void saveProfile();
+    void forgetHost();
     void applyLanguage(bool chinese);
     void onVerified(const QString& remote, bool ok, const QString& detail);
     void uploadSelected();
@@ -100,8 +100,6 @@ private:
     QCheckBox* remember_ = nullptr;
     QPushButton* connect_ = nullptr;
     QPushButton* probe_ = nullptr;
-    QComboBox* profileBox_ = nullptr;
-    QPushButton* saveProfile_ = nullptr;
 
     QLineEdit* localPathEdit_ = nullptr;
     QPushButton* localUp_ = nullptr;
@@ -135,6 +133,13 @@ private:
     bool verifyUploads_ = false;
     bool chinese_ = false;
     int rateLimit_ = 0;
+
+    QAction* rateAction_ = nullptr;
+    QAction* verifyAction_ = nullptr;
+    QAction* infoAction_ = nullptr;
+    QAction* hiddenAction_ = nullptr;
+    QAction* forgetAction_ = nullptr;
+    QAction* clearHistoryAction_ = nullptr;
 
     QString localRoot_;
     QString remoteRoot_ = "/";

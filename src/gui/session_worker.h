@@ -37,6 +37,7 @@ public slots:
     void download(const QString& remote, const QString& local);
     void downloadResume(const QString& remote, const QString& local, quint64 offset);
     void upload(const QString& local, const QString& remote, bool overwrite);
+    void uploadResume(const QString& local, const QString& remote, quint64 offset);
     void downloadTree(const QString& remote, const QString& local);
     void uploadTree(const QString& local, const QString& remote);
     void makeDir(const QString& path);

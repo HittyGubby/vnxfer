@@ -234,6 +234,23 @@ void SessionWorker::upload(const QString& local, const QString& remote, bool ove
     });
 }
 
+void SessionWorker::uploadResume(const QString& local, const QString& remote, quint64 offset) {
+    guarded("upload", [&] {
+        QElapsedTimer timer;
+        timer.start();
+        throttle_timer_.invalidate();
+        quint64 last_emit = 0;
+        session_->upload_resume(
+            local.toStdString(), remote.toStdString(), true, offset,
+            [&](uint64_t done, uint64_t total) {
+                if (timer.elapsed() - static_cast<qint64>(last_emit) < 100 && done != total) return;
+                last_emit = static_cast<quint64>(timer.elapsed());
+                throttle(done);
+                emit progress(done, total);
+            });
+    });
+}
+
 void SessionWorker::downloadTree(const QString& remote, const QString& local) {
     guarded("download", [&] {
         QElapsedTimer timer;
