@@ -71,9 +71,17 @@ public:
     bool supports_resume() const override { return true; }
 
     void ping() override {
-        client_.write_u32(0xFC000300);  // ECHO_REQUEST
-        uint32_t id = client_.read_u32(5000);
-        if (id != 0xFC000300) throw std::runtime_error("keepalive failed");
+        // TightVNC 2.x does not advertise ECHO_REQUEST, so a harmless directory
+        // listing of the root is the cheapest round-trip that keeps the stream
+        // (and the shared zlib state) in sync.
+        client_.write_u32(rfb::kTv2FileListRequest);
+        client_.write_u8(compression_ ? 1 : 0);
+        write_utf8("/");
+        expect(rfb::kTv2FileListReply);
+        uint8_t level = client_.read_u8();
+        uint32_t csize = client_.read_u32();
+        uint32_t usize = client_.read_u32();
+        (void)read_block(level, csize, usize);
     }
 
     std::string md5(const std::string& path, uint64_t offset, uint64_t size) override {

@@ -39,6 +39,7 @@
 #include <QStandardItemModel>
 #include <QStyleFactory>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -506,7 +507,9 @@ void MainWindow::onConnected(const QString& protocol, const QString& root) {
         enqueueJob({"download", selftestRemote_, selftestLocal_, "selftest"});
     }
     if (!uploadTestLocal_.isEmpty()) {
-        enqueueUpload(uploadTestLocal_);
+        const QString local = uploadTestLocal_;
+        uploadTestLocal_.clear();
+        QTimer::singleShot(1500, this, [this, local] { enqueueUpload(local); });
     }
 }
 
@@ -518,25 +521,61 @@ void MainWindow::onListed(const QString& path, const QVector<RemoteEntryQt>& ent
     if (path == remoteRoot_) {
         remoteModel_->removeRows(0, remoteModel_->rowCount());
         remoteRoot_ = path;
-        auto* item = new QStandardItem(QFileIconProvider().icon(QFileIconProvider::Folder),
-                                       QFileInfo(path).fileName().isEmpty() ? QString("/")
-                                                                            : QFileInfo(path).fileName());
-        item->setData(path, kPathRole);
-        item->setData(true, kDirRole);
-        item->setData(true, kLoadedRole);
-        item->setEditable(false);
-        remoteModel_->appendRow(item);
+        const QStringList expanded = collectExpanded(remoteModel_->invisibleRootItem());
+        QStandardItem* item = findRemoteItem(path);
+        if (!item) {
+            item = new QStandardItem(QFileIconProvider().icon(QFileIconProvider::Folder),
+                                     QFileInfo(path).fileName().isEmpty()
+                                         ? QString("/")
+                                         : QFileInfo(path).fileName());
+            item->setData(path, kPathRole);
+            item->setData(true, kDirRole);
+            item->setData(true, kLoadedRole);
+            item->setEditable(false);
+            remoteModel_->appendRow(item);
+        }
         fillRemoteItem(item, entries);
         remoteView_->setRootIndex(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
         remoteView_->expand(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
+        restoreExpanded(expanded);
         if (currentRemoteDir_.isEmpty()) currentRemoteDir_ = path;
         remotePathEdit_->setText(currentRemoteDir_);
         setBusy(false);
         return;
     }
-    auto* item = findRemoteItem(path);
-    if (item) fillRemoteItem(item, entries);
+    QStandardItem* item = findRemoteItem(path);
+    if (item) {
+        const QStringList expanded = collectExpanded(item);
+        fillRemoteItem(item, entries);
+        restoreExpanded(expanded);
+    }
     setBusy(false);
+}
+
+QStringList MainWindow::collectExpanded(QStandardItem* item) const {
+    QStringList paths;
+    if (!item) return paths;
+    const QModelIndex index = remoteModel_->indexFromItem(item);
+    if (index.isValid() && remoteView_->isExpanded(remoteProxy_->mapFromSource(index))) {
+        const QString path = item->data(kPathRole).toString();
+        if (!path.isEmpty()) paths << path;
+    }
+    for (int i = 0; i < item->rowCount(); ++i) paths += collectExpanded(item->child(i));
+    return paths;
+}
+
+void MainWindow::restoreExpanded(const QStringList& paths) {
+    for (const QString& path : paths) {
+        QStandardItem* item = findRemoteItem(path);
+        if (!item) continue;
+        remoteView_->expand(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
+    }
+}
+
+void MainWindow::refreshPath(const QString& path) {
+    if (!connected_ || path.isEmpty()) return;
+    setBusy(true);
+    QMetaObject::invokeMethod(worker_, "list", Qt::QueuedConnection, Q_ARG(QString, path));
 }
 
 void MainWindow::fillRemoteItem(QStandardItem* item, const QVector<RemoteEntryQt>& entries) {
@@ -798,6 +837,27 @@ void MainWindow::enqueueUpload(const QString& local) {
     QString remote = targetDir;
     if (!remote.endsWith('/')) remote += '/';
     remote += info.fileName();
+
+    QStandardItem* existing = findRemoteItem(remote);
+    if (existing) {
+        const bool existingIsDir = existing->data(kDirRole).toBool();
+        if (info.isDir() && existingIsDir) {
+            if (QMessageBox::question(
+                    this, "Merge",
+                    QString("Folder %1 already exists. Merge into it?").arg(remote)) !=
+                QMessageBox::Yes) {
+                return;
+            }
+        } else if (!info.isDir() && !existingIsDir) {
+            if (QMessageBox::question(
+                    this, "Overwrite",
+                    QString("%1 already exists. Overwrite it?").arg(remote)) !=
+                QMessageBox::Yes) {
+                return;
+            }
+        }
+    }
+
     if (info.isDir()) {
         enqueueJob({"upload-tree", local, remote, "↑ " + info.fileName() + "/"});
         return;
@@ -989,10 +1049,16 @@ void MainWindow::onFinished(const QString& what) {
     setBusy(false);
     status_->setText(what + " done");
     progress_->setValue(0);
-    if (what == "upload" || what == "download" || what == "remove" || what == "rename" ||
-        what == "mkdir") {
-        refreshRemote();
+    // Refresh only the directory that changed so expanded branches stay open.
+    QString changedDir;
+    if (what == "upload") {
+        changedDir = QFileInfo(currentJob_.b).path();
+    } else if (what == "download") {
+        changedDir = QFileInfo(currentJob_.a).path();
+    } else if (what == "remove" || what == "rename" || what == "mkdir") {
+        changedDir = QFileInfo(currentJob_.a).path();
     }
+    if (!changedDir.isEmpty() && changedDir != "/") refreshPath(changedDir);
     if (what == "upload" && !pendingTempFile_.isEmpty()) {
         QFile::remove(pendingTempFile_);
         pendingTempFile_.clear();
@@ -1009,6 +1075,11 @@ void MainWindow::onFailed(const QString& what, const QString& message) {
     setBusy(false);
     progress_->setValue(0);
     status_->setText(what + " failed");
+    if (what == "keepalive") {
+        // A dropped keepalive is informational; do not interrupt with a dialog.
+        if (logView_) logView_->appendPlainText("keepalive failed: " + message);
+        return;
+    }
     if (what == "connect") {
         connected_ = false;
         connect_->setText("Connect");

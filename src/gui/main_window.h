@@ -14,6 +14,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QFileSystemModel;
 class QAction;
+class QStandardItem;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
@@ -95,6 +96,9 @@ private:
     quint64 selectedRemoteSize() const;
     void fillRemoteItem(QStandardItem* item, const QVector<RemoteEntryQt>& entries);
     QStandardItem* findRemoteItem(const QString& path);
+    QStringList collectExpanded(QStandardItem* item) const;
+    void restoreExpanded(const QStringList& paths);
+    void refreshPath(const QString& path);
 
     QThread thread_;
     SessionWorker* worker_ = nullptr;
