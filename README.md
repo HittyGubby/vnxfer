@@ -4,11 +4,16 @@ Linux 上的 VNC 文件传输客户端。目标是补齐 TightVNC / UltraVNC 在
 
 三套后端（UltraVNC / TightVNC 2.x / TightVNC 1.3）、CLI 与 Qt6 GUI。
 
-## 构建
+## 安装
+
+Arch Linux：`packaging/build-arch-pkg.sh` 会构建本地包并用 `paru -U` 安装。
+
+其他平台：
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+cd build && cpack -G "TGZ;DEB;RPM"   # 或 ZIP / DragNDrop
 ```
 
 依赖：CMake ≥ 3.20、C++20、OpenSSL、zlib、Qt6 Widgets；可选 libsecret（密码进系统钥匙串）。
