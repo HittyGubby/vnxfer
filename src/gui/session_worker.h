@@ -42,6 +42,7 @@ public slots:
     void uploadTree(const QString& local, const QString& remote);
     void makeDir(const QString& path);
     void removePath(const QString& path);
+    void removeTree(const QString& path);
     void renamePath(const QString& from, const QString& to);
     void setRateLimit(int bytesPerSecond);
     void probe(const QString& host, quint16 port, const QString& password);

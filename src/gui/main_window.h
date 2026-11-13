@@ -42,6 +42,8 @@ protected:
 
 private slots:
     void onConnectClicked();
+    void localDelete();
+    void localRename();
     void onConnected(const QString& protocol, const QString& root);
     void onListed(const QString& path, const QVector<RemoteEntryQt>& entries);
     void onProgress(quint64 done, quint64 total);
@@ -160,4 +162,6 @@ private:
     QString uploadTestLocal_;
     bool connected_ = false;
     bool showHidden_ = false;
+    enum class Side { Local, Remote };
+    Side activeSide_ = Side::Remote;
 };

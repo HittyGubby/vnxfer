@@ -354,7 +354,11 @@ int run_action_once(const std::string& cmd, const Options& opts) {
     if (cmd == "mkdir") {
         session->mkdir(opts.path);
     } else if (cmd == "rm") {
-        session->remove(opts.path);
+        if (opts.recursive) {
+            remove_tree(*session, opts.path);
+        } else {
+            session->remove(opts.path);
+        }
     } else if (cmd == "mv") {
         session->rename(opts.from, opts.to);
     }

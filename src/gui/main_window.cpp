@@ -395,6 +395,17 @@ void MainWindow::buildUi() {
     remoteTree->remoteSide = true;
     remoteTree->dropLocalFile = [this](const QString& localPath) { enqueueUpload(localPath); };
 
+    // Only one pane owns the selection at a time; the middle buttons act on it.
+    connect(localView_, &QTreeView::clicked, this, [this] {
+        activeSide_ = Side::Local;
+        remoteView_->selectionModel()->clearSelection();
+        status_->setText("local selection");
+    });
+    connect(remoteView_, &QTreeView::clicked, this, [this] {
+        activeSide_ = Side::Remote;
+        localView_->selectionModel()->clearSelection();
+        status_->setText("remote selection");
+    });
     connect(remoteView_, &QTreeView::doubleClicked, this, &MainWindow::onRemoteDoubleClicked);
     connect(remoteView_, &QTreeView::expanded, this, &MainWindow::onRemoteExpanded);
     connect(remoteView_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
@@ -934,6 +945,8 @@ void MainWindow::startNextJob() {
         QMetaObject::invokeMethod(worker_, "makeDir", Qt::QueuedConnection, Q_ARG(QString, job.a));
     } else if (job.kind == "remove") {
         QMetaObject::invokeMethod(worker_, "removePath", Qt::QueuedConnection, Q_ARG(QString, job.a));
+    } else if (job.kind == "remove-tree") {
+        QMetaObject::invokeMethod(worker_, "removeTree", Qt::QueuedConnection, Q_ARG(QString, job.a));
     } else if (job.kind == "rename") {
         QMetaObject::invokeMethod(worker_, "renamePath", Qt::QueuedConnection, Q_ARG(QString, job.a),
                                   Q_ARG(QString, job.b));
@@ -1013,15 +1026,58 @@ void MainWindow::makeFile() {
     enqueueJob({"upload", tempPath, path, "new file " + name.trimmed()});
 }
 
+void MainWindow::localDelete() {
+    const auto indexes = localView_->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) return;
+    const QString path = localModel_->filePath(indexes.first());
+    if (QMessageBox::question(this, "Delete", "Delete local " + path + "?") != QMessageBox::Yes) {
+        return;
+    }
+    QFileInfo info(path);
+    const bool ok = info.isDir() ? QDir(path).removeRecursively() : QFile::remove(path);
+    status_->setText(ok ? "local delete ok" : "local delete failed");
+    refreshLocal();
+}
+
+void MainWindow::localRename() {
+    const auto indexes = localView_->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) return;
+    const QString path = localModel_->filePath(indexes.first());
+    const QString oldName = QFileInfo(path).fileName();
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, "Rename", "New name:", QLineEdit::Normal,
+                                               oldName, &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    const QString target = QFileInfo(path).path() + "/" + name.trimmed();
+    if (QDir().rename(path, target)) {
+        status_->setText("local rename ok");
+    } else {
+        status_->setText("local rename failed");
+    }
+    refreshLocal();
+}
+
 void MainWindow::deleteSelected() {
+    if (activeSide_ == Side::Local) {
+        localDelete();
+        return;
+    }
     if (!connected_) return;
     const QString path = selectedRemotePath();
     if (path.isEmpty()) return;
     if (QMessageBox::question(this, "Delete", "Delete " + path + "?") != QMessageBox::Yes) return;
-    enqueueJob({"remove", path, {}, "delete " + QFileInfo(path).fileName()});
+    if (selectedRemoteIsDir()) {
+        enqueueJob({"remove-tree", path, {}, "delete " + QFileInfo(path).fileName() + "/"});
+    } else {
+        enqueueJob({"remove", path, {}, "delete " + QFileInfo(path).fileName()});
+    }
 }
 
 void MainWindow::renameSelected() {
+    if (activeSide_ == Side::Local) {
+        localRename();
+        return;
+    }
     if (!connected_) return;
     const QString path = selectedRemotePath();
     if (path.isEmpty()) return;

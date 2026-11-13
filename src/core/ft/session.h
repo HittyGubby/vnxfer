@@ -61,6 +61,8 @@ struct TransferStats {
     uint64_t bytes = 0;
 };
 
+// Deletes a remote file or a whole directory tree (depth-first).
+void remove_tree(FtSession& session, const std::string& remote_path);
 void download_tree(FtSession& session, const std::string& remote_dir,
                    const std::string& local_dir, const ProgressFn& progress,
                    TransferStats& stats);

@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 
 #include "core/ft/session.h"
@@ -63,6 +64,36 @@ private:
 };
 
 }  // namespace
+
+void remove_tree(FtSession& session, const std::string& remote_path) {
+    std::vector<RemoteFile> files;
+    uint64_t total = 0;
+    try {
+        collect_remote(session, remote_path, files, total);
+    } catch (const std::exception&) {
+        // Not a directory (or not listable): fall through to a plain remove.
+    }
+    for (const auto& file : files) session.remove(file.path);
+
+    // Remove directories bottom-up: list again so nested dirs are included.
+    std::vector<std::string> dirs;
+    std::function<void(const std::string&)> walk = [&](const std::string& dir) {
+        for (const auto& entry : session.list(dir)) {
+            if (entry.name == "." || entry.name == "..") continue;
+            const std::string child = join_remote(dir, entry.name);
+            if (entry.is_dir) {
+                walk(child);
+                dirs.push_back(child);
+            }
+        }
+    };
+    try {
+        walk(remote_path);
+    } catch (const std::exception&) {
+    }
+    for (const auto& dir : dirs) session.remove(dir);
+    session.remove(remote_path);
+}
 
 void download_tree(FtSession& session, const std::string& remote_dir,
                    const std::string& local_dir, const ProgressFn& progress,

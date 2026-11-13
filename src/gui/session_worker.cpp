@@ -306,6 +306,10 @@ void SessionWorker::removePath(const QString& path) {
     guarded("remove", [&] { session_->remove(path.toStdString()); });
 }
 
+void SessionWorker::removeTree(const QString& path) {
+    guarded("remove", [&] { vnxfer::remove_tree(*session_, path.toStdString()); });
+}
+
 void SessionWorker::renamePath(const QString& from, const QString& to) {
     guarded("rename", [&] { session_->rename(from.toStdString(), to.toStdString()); });
 }
