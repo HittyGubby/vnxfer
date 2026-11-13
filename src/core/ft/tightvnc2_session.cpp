@@ -70,6 +70,33 @@ public:
 
     bool supports_resume() const override { return true; }
 
+    void ping() override {
+        client_.write_u32(0xFC000300);  // ECHO_REQUEST
+        uint32_t id = client_.read_u32(5000);
+        if (id != 0xFC000300) throw std::runtime_error("keepalive failed");
+    }
+
+    std::string md5(const std::string& path, uint64_t offset, uint64_t size) override {
+        client_.write_u32(rfb::kTv2Md5Request);
+        write_utf8(path);
+        client_.write_u64(offset);
+        client_.write_u64(size);
+        expect(rfb::kTv2Md5Reply);
+        auto digest = client_.read_bytes(16);
+        static const char* hex = "0123456789abcdef";
+        std::string out;
+        for (uint8_t b : digest) {
+            out.push_back(hex[b >> 4]);
+            out.push_back(hex[b & 0xF]);
+        }
+        return out;
+    }
+
+    std::string capabilities() const override {
+        return "TightVNC 2.x (0xFC0001xx): list, download, upload, mkdir, rm, rename, "
+               "dirsize, md5, resume, compression";
+    }
+
     void download(const std::string& remote, const std::string& local,
                   const ProgressFn& progress) override {
         download_impl(remote, local, 0, progress);

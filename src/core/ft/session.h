@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,13 @@ public:
     virtual void rename(const std::string& from, const std::string& to) = 0;
 
     virtual bool supports_resume() const { return false; }
+    // Cheap round-trip used as a keepalive; no-op where the protocol has none.
+    virtual void ping() {}
+    // Lowercase hex MD5 of a remote chunk; throws when unsupported.
+    virtual std::string md5(const std::string&, uint64_t, uint64_t) {
+        throw std::runtime_error("md5 is not supported by this protocol");
+    }
+    virtual std::string capabilities() const { return {}; }
     virtual void download_resume(const std::string& remote, const std::string& local,
                                  uint64_t offset, const ProgressFn& progress) {
         (void)offset;

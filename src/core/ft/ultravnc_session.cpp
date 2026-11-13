@@ -61,6 +61,15 @@ public:
 
     std::string describe() const override { return "ultravnc"; }
     std::string default_root() const override { return "/"; }
+    std::string capabilities() const override {
+        return "UltraVNC (message type 7): list, download, upload, mkdir, rm, rename, drives";
+    }
+
+    void ping() override {
+        client_.send_ft(rfb::kFtAbortFileTransfer, 3, 0, {});
+        FtMessage msg;
+        if (!client_.read_ft_message(msg, 5000)) throw std::runtime_error("keepalive failed");
+    }
 
     std::vector<RemoteEntry> list(const std::string& path) override {
         client_.send_ft(rfb::kFtDirContentRequest, rfb::kFtRDirContent, 0,

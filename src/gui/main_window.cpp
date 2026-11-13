@@ -24,6 +24,8 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QDockWidget>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
@@ -134,6 +136,13 @@ MainWindow::MainWindow() {
     connect(worker_, &SessionWorker::progress, this, &MainWindow::onProgress);
     connect(worker_, &SessionWorker::finished, this, &MainWindow::onFinished);
     connect(worker_, &SessionWorker::failed, this, &MainWindow::onFailed);
+    connect(worker_, &SessionWorker::logged, this, [this](const QString& line) {
+        if (logView_) logView_->appendPlainText(line);
+    });
+    connect(worker_, &SessionWorker::capabilitiesReady, this, [this](const QString& text) {
+        capabilities_ = text;
+    });
+    connect(worker_, &SessionWorker::verified, this, &MainWindow::onVerified);
     thread_.start();
 
     buildUi();
@@ -277,7 +286,26 @@ void MainWindow::buildUi() {
     jobList_->setVisible(false);
     root->addWidget(jobList_);
 
+    auto* dock = new QDockWidget("Log", this);
+    logView_ = new QPlainTextEdit();
+    logView_->setReadOnly(true);
+    logView_->setMaximumBlockCount(500);
+    dock->setWidget(logView_);
+    addDockWidget(Qt::BottomDockWidgetArea, dock);
+    dock->hide();
+
     setCentralWidget(central);
+
+    auto* settingsMenu = menuBar()->addMenu("Settings");
+    auto* rateAction = settingsMenu->addAction("Rate limit...");
+    connect(rateAction, &QAction::triggered, this, &MainWindow::configureRateLimit);
+    auto* verifyAction = settingsMenu->addAction("Verify uploads (MD5)");
+    verifyAction->setCheckable(true);
+    verifyAction->setChecked(verifyUploads_);
+    connect(verifyAction, &QAction::toggled, this, [this](bool on) { verifyUploads_ = on; });
+    auto* connectionMenu = menuBar()->addMenu("Connection");
+    auto* infoAction = connectionMenu->addAction("Info");
+    connect(infoAction, &QAction::triggered, this, &MainWindow::showConnectionInfo);
 
     auto* viewMenu = menuBar()->addMenu("View");
     auto* hiddenAction = viewMenu->addAction("Show hidden files");
@@ -546,6 +574,30 @@ void MainWindow::refreshLocal() {
     localView_->setRootIndex(localModel_->index(localRoot_));
 }
 
+void MainWindow::configureRateLimit() {
+    bool ok = false;
+    const int current = rateLimit_ / 1024;
+    const int kb = QInputDialog::getInt(this, "Rate limit", "KB/s (0 = unlimited):", current, 0,
+                                        1024 * 1024, 64, &ok);
+    if (!ok) return;
+    rateLimit_ = kb * 1024;
+    QMetaObject::invokeMethod(worker_, "setRateLimit", Qt::QueuedConnection, Q_ARG(int, rateLimit_));
+    status_->setText(kb == 0 ? "rate limit off" : QString("rate limit %1 KB/s").arg(kb));
+}
+
+void MainWindow::showConnectionInfo() {
+    QMessageBox::information(this, "Connection info",
+                             QString("Endpoint: %1\n\n%2").arg(
+                                 endpoint(), capabilities_.isEmpty() ? "no capability data"
+                                                                    : capabilities_));
+}
+
+void MainWindow::onVerified(const QString& remote, bool ok, const QString& detail) {
+    status_->setText(ok ? "md5 ok" : "md5 MISMATCH");
+    if (logView_) logView_->appendPlainText(QString("%1: %2 (%3)").arg(remote, ok ? "ok" : "MISMATCH", detail));
+    if (!ok) QMessageBox::warning(this, "Checksum", "MD5 mismatch for " + remote + "\n" + detail);
+}
+
 void MainWindow::toggleHidden(bool show) {
     showHidden_ = show;
     localModel_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | (show ? QDir::Hidden : QDir::NoFilter));
@@ -562,6 +614,14 @@ QString MainWindow::selectedRemotePath() const {
 bool MainWindow::selectedRemoteIsDir() const {
     const auto indexes = remoteView_->selectionModel()->selectedRows(0);
     return !indexes.isEmpty() && indexes.first().data(kDirRole).toBool();
+}
+
+quint64 MainWindow::selectedRemoteSize() const {
+    const auto indexes = remoteView_->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) return 0;
+    const QModelIndex index = indexes.first();
+    const QModelIndex sizeIndex = index.sibling(index.row(), 1);
+    return sizeIndex.data(kSortRole).toULongLong();
 }
 
 void MainWindow::uploadSelected() {
@@ -606,6 +666,7 @@ void MainWindow::startNextJob() {
         return;
     }
     const TransferJob job = jobs_.dequeue();
+    currentJob_ = job;
     jobRunning_ = true;
     if (jobList_->count() > 0) delete jobList_->takeItem(0);
     jobList_->insertItem(0, "running: " + job.label);
@@ -624,6 +685,11 @@ void MainWindow::startNextJob() {
     } else if (job.kind == "download-tree") {
         QMetaObject::invokeMethod(worker_, "downloadTree", Qt::QueuedConnection,
                                   Q_ARG(QString, job.a), Q_ARG(QString, job.b));
+    } else if (job.kind == "download-resume") {
+        const quint64 offset = static_cast<quint64>(QFileInfo(job.b).size());
+        QMetaObject::invokeMethod(worker_, "downloadResume", Qt::QueuedConnection,
+                                  Q_ARG(QString, job.a), Q_ARG(QString, job.b),
+                                  Q_ARG(quint64, offset));
     } else if (job.kind == "mkdir") {
         QMetaObject::invokeMethod(worker_, "makeDir", Qt::QueuedConnection, Q_ARG(QString, job.a));
     } else if (job.kind == "remove") {
@@ -655,9 +721,22 @@ void MainWindow::downloadSelected() {
     const QString local = QDir(localDir).filePath(name);
     if (isDir) {
         enqueueJob({"download-tree", remote, local, "↓ " + name + "/"});
-    } else {
-        enqueueJob({"download", remote, local, "↓ " + name});
+        return;
     }
+    const quint64 have = QFileInfo(local).size();
+    const quint64 remoteSize = selectedRemoteSize();
+    if (have > 0 && remoteSize > have) {
+        const auto answer = QMessageBox::question(
+            this, "Resume",
+            QString("Local file has %1 of %2 bytes. Resume?")
+                .arg(have)
+                .arg(remoteSize));
+        if (answer == QMessageBox::Yes) {
+            enqueueJob({"download-resume", remote, local, "↻ " + name});
+            return;
+        }
+    }
+    enqueueJob({"download", remote, local, "↓ " + name});
 }
 
 void MainWindow::makeFolder() {
@@ -736,6 +815,11 @@ void MainWindow::onFinished(const QString& what) {
     if (what == "upload" && !pendingTempFile_.isEmpty()) {
         QFile::remove(pendingTempFile_);
         pendingTempFile_.clear();
+    }
+    if (what == "upload" && verifyUploads_ && !currentJob_.a.isEmpty() &&
+        currentJob_.kind == "upload") {
+        QMetaObject::invokeMethod(worker_, "verifyUpload", Qt::QueuedConnection,
+                                  Q_ARG(QString, currentJob_.a), Q_ARG(QString, currentJob_.b));
     }
     finishCurrentJob();
 }

@@ -10,6 +10,7 @@
 class QCheckBox;
 class QComboBox;
 class QListWidget;
+class QPlainTextEdit;
 class QFileSystemModel;
 class QLabel;
 class QLineEdit;
@@ -48,6 +49,9 @@ private slots:
     void localGoUp();
     void refreshLocal();
     void toggleHidden(bool show);
+    void configureRateLimit();
+    void showConnectionInfo();
+    void onVerified(const QString& remote, bool ok, const QString& detail);
     void uploadSelected();
     void downloadSelected();
     void makeFolder();
@@ -79,6 +83,7 @@ private:
     QString endpoint() const;
     QString selectedRemotePath() const;
     bool selectedRemoteIsDir() const;
+    quint64 selectedRemoteSize() const;
     void fillRemoteItem(QStandardItem* item, const QVector<RemoteEntryQt>& entries);
     QStandardItem* findRemoteItem(const QString& path);
 
@@ -115,8 +120,13 @@ private:
     QLabel* status_ = nullptr;
     QListWidget* jobList_ = nullptr;
     QPushButton* cancelJob_ = nullptr;
+    QPlainTextEdit* logView_ = nullptr;
     QQueue<TransferJob> jobs_;
+    TransferJob currentJob_;
+    QString capabilities_;
     bool jobRunning_ = false;
+    bool verifyUploads_ = false;
+    int rateLimit_ = 0;
 
     QString localRoot_;
     QString remoteRoot_ = "/";

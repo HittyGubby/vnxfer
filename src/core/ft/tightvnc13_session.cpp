@@ -20,6 +20,9 @@ public:
 
     std::string describe() const override { return "tightvnc1.3"; }
     std::string default_root() const override { return "/"; }
+    std::string capabilities() const override {
+        return "TightVNC 1.3 (130-136): list, download, upload, mkdir";
+    }
 
     std::vector<RemoteEntry> list(const std::string& path) override {
         const std::string wire = normalize(path);
