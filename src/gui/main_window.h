@@ -44,6 +44,8 @@ private slots:
     void onConnectClicked();
     void localDelete();
     void localRename();
+    void localNewFolder();
+    void localNewFile();
     void onConnected(const QString& protocol, const QString& root);
     void onListed(const QString& path, const QVector<RemoteEntryQt>& entries);
     void onProgress(quint64 done, quint64 total);
@@ -93,6 +95,7 @@ private:
     void setBusy(bool busy);
     void addHistory(const QString& entry);
     QString endpoint() const;
+    QString localCurrentDir() const;
     QString selectedRemotePath() const;
     bool selectedRemoteIsDir() const;
     quint64 selectedRemoteSize() const;

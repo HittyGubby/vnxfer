@@ -993,7 +993,47 @@ void MainWindow::downloadSelected() {
     enqueueJob({"download", remote, local, "↓ " + name});
 }
 
+QString MainWindow::localCurrentDir() const {
+    const auto indexes = localView_->selectionModel()->selectedRows(0);
+    if (indexes.isEmpty()) return localRoot_;
+    const QString path = localModel_->filePath(indexes.first());
+    return QFileInfo(path).isDir() ? path : QFileInfo(path).path();
+}
+
+void MainWindow::localNewFolder() {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, "New folder", "Name:", QLineEdit::Normal,
+                                               "new-folder", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    QDir dir(localCurrentDir());
+    if (dir.mkdir(name.trimmed())) {
+        status_->setText("local folder created");
+    } else {
+        status_->setText("local folder failed");
+    }
+    refreshLocal();
+}
+
+void MainWindow::localNewFile() {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, "New file", "Name:", QLineEdit::Normal,
+                                               "new-file.txt", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    QFile file(QDir(localCurrentDir()).filePath(name.trimmed()));
+    if (file.open(QIODevice::WriteOnly)) {
+        file.close();
+        status_->setText("local file created");
+    } else {
+        status_->setText("local file failed");
+    }
+    refreshLocal();
+}
+
 void MainWindow::makeFolder() {
+    if (activeSide_ == Side::Local) {
+        localNewFolder();
+        return;
+    }
     if (!connected_) return;
     bool ok = false;
     const QString name = QInputDialog::getText(this, "New folder", "Name:", QLineEdit::Normal,
@@ -1006,6 +1046,10 @@ void MainWindow::makeFolder() {
 }
 
 void MainWindow::makeFile() {
+    if (activeSide_ == Side::Local) {
+        localNewFile();
+        return;
+    }
     if (!connected_) return;
     bool ok = false;
     const QString name = QInputDialog::getText(this, "New file", "Name:", QLineEdit::Normal,
