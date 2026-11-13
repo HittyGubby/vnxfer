@@ -2,7 +2,7 @@
 
 Linux 上的 VNC 文件传输客户端。目标是补齐 TightVNC / UltraVNC 在 Linux 端缺失的文件传输能力，不依赖 Wine。
 
-当前进度：**M0–M5 完成** —— 三套后端（UltraVNC / TightVNC 2.x / TightVNC 1.3）、递归传输、断点续传、失败重试、Qt6 图形界面。
+三套后端（UltraVNC / TightVNC 2.x / TightVNC 1.3）、CLI 与 Qt6 GUI。
 
 ## 构建
 
@@ -11,7 +11,7 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
-依赖：CMake ≥ 3.20、C++20 编译器、OpenSSL、zlib、Qt6 Widgets（仅 GUI）。
+依赖：CMake ≥ 3.20、C++20、OpenSSL、zlib、Qt6 Widgets；可选 libsecret（密码进系统钥匙串）。
 
 产物：`build/vnxfer`（CLI）、`build/vnxfer-gui`（GUI）。
 
@@ -22,10 +22,18 @@ cmake --build build -j
 ./build/vnxfer-gui --connect 192.0.2.10:5900 --password secret --path /C:/Users/Public
 ```
 
-- 左栏本地文件、右栏远端文件，中间是上传/下载/新建文件夹/新建文件/删除/重命名。
-- 两栏都支持点表头排序；远端路径栏可直接编辑回车跳转，`Up` 返回上级。
-- 连接历史（最近 15 条）与"记住密码"（QSettings，base64 编码，**不是加密**）。
-- 传输进度在底部，失败会弹窗并可自动重试（默认 3 次、指数退避）。
+- 左右对称的双栏树：两侧都有 `Up / Refresh / 路径栏`，文件夹优先排序、图标、展开箭头与本地一致。
+- 中间：`Upload →`、`← Download`、`New folder`、`New file`、`Delete`、`Rename`。
+- 传输队列：多任务排队、串行执行、`Cancel` 清空并中断当前任务。
+- 拖拽：本地文件/目录拖到右侧即上传，远端条目拖到左侧即下载。
+- 断点续传：下载时若本地已有部分文件，弹窗询问是否续传。
+- 限速：`Settings → Rate limit...`（KB/s，0 为不限）。
+- 校验：`Settings → Verify uploads (MD5)`，TightVNC 2.x 上传后自动比对。
+- 心跳：连接后每 45 秒发一次轻量请求，失败会在日志与状态栏提示。
+- 连接管理：历史下拉、`Probe` 探测协议、`Profiles` 保存常用主机、`Save profile`。
+- 密码：`remember` 时优先写入系统钥匙串（libsecret），不可用时退化为 QSettings base64（仅混淆）。
+- 视图：`View → Show hidden files`、`Language → English/中文`、`Theme → System/Fusion`。
+- 日志：底部 `Log` 停靠面板。
 
 ## CLI
 
@@ -41,39 +49,40 @@ cmake --build build -j
 
 ## 支持矩阵
 
-| 协议 | 识别方式 | ls | get | put | mkdir | rm/mv | 递归 | 续传 |
-|---|---|---|---|---|---|---|---|---|
-| UltraVNC（消息类型 7） | 权限探测 → `Access(14)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| TightVNC 2.x（0xFC0001xx） | Tight 认证 + caps 含 `0xFC000100` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| TightVNC 1.3（130–136） | Tight 认证 + caps 含 130–135 | ✅ | ✅ | ✅ | ✅ | — | ✅ | — |
+| 协议 | 识别方式 | ls | get | put | mkdir | rm/mv | 递归 | 续传 | MD5 |
+|---|---|---|---|---|---|---|---|---|---|
+| UltraVNC（消息类型 7） | 权限探测 → `Access(14)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| TightVNC 2.x（0xFC0001xx） | Tight 认证 + caps 含 `0xFC000100` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| TightVNC 1.3（130–136） | Tight 认证 + caps 含 130–135 | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
 
 ## 已验证
 
 | 服务端 | 结果 |
 |---|---|
 | x11vnc 0.9.17 `-ultrafilexfer` | 全部命令 + 递归树 diff 一致 + 5 MiB 往返 md5 一致 |
-| TightVNC Server 2.8.x（Windows） | 全部命令 + 递归 + 1/2 MiB 续传 md5 一致，GUI 连接/浏览/自测下载通过 |
+| TightVNC Server 2.8.x（Windows） | 全部命令 + 递归 + 续传 md5 一致；GUI 连接、浏览、自测下载通过 |
 | libvncserver + TightVNC 扩展 | ls/get/put/mkdir + 递归 |
 
 ## 实现要点 / 踩过的坑
 
 - **RFB 3.3/3.6 的 None 认证不能回类型字节**：服务端把那个字节当成 ClientInit，整条流错位。
-- **UltraVNC 下载需要回执**：收到 `FileHeader` 后回一个空的 `FileHeader`，服务端才开始发 `FilePacket`；`sizeH` 4 字节别漏读。
-- **UltraVNC 上传没有结束确认**：发完 `EndOfFile` 再 round-trip 一个驱动列表请求，否则连接先关会把文件截断。
-- **TightVNC 2.x 的压缩块是 `deflate(Z_SYNC_FLUSH)` 且不 finish**：没有 Adler-32，要按输出字节数判定；同一连接共用一个流，inflate 必须只初始化一次并消费完每帧输入。
-- **TightVNC 2.x 的文件名带内嵌 NUL**：不清掉会让路径拼接产生 `\0`，递归列表会无限循环。
-- **TightVNC 2.x 上传新文件必须 overwrite=1**（服务端靠 truncate 创建），否则报"系统找不到指定的文件"。
-- **TightVNC 2.x 的 FT 只在 Tight 安全类型连接上注册**，普通 VNC auth 连接发 0xFC 消息会被断开。
-- **TightVNC 1.3 的目录条目没有 flags**：目录用 size=-1 表示；`ftproot` 前缀是 `$HOME`。
-- **TightVNC 1.3 没有删除/重命名消息**。
+- **UltraVNC 下载需要回执**：收到 `FileHeader` 后回空的 `FileHeader`，服务端才发数据；`sizeH` 4 字节别漏读。
+- **UltraVNC 上传没有结束确认**：发完 `EndOfFile` 再 round-trip 驱动列表，否则连接先关会截断。
+- **TightVNC 2.x 的压缩是共享流的 `deflate(Z_SYNC_FLUSH)`**：无 Adler-32，inflate 只初始化一次并消费完每帧输入。
+- **TightVNC 2.x 的文件名带内嵌 NUL**：不清掉会让路径拼接产生 `\0`，递归列表无限循环。
+- **TightVNC 2.x 上传新文件必须 overwrite=1**（服务端靠 truncate 创建）。
+- **TightVNC 2.x 的 FT 只在 Tight 安全类型连接上注册**。
+- **TightVNC 1.3 的目录用 size=-1 表示**，且没有删除/重命名消息。
+- **Qt 的 `signals` 宏会破坏 glib 结构体**：libsecret 头必须在 Qt 头之前 include。
 
-## 路线图
+## Commit 历史
 
-- M0 ✅ 连接、认证、能力探测
-- M1 ✅ UltraVNC 后端
-- M2 ✅ TightVNC 2.x 后端
-- M3 ✅ TightVNC 1.3 后端
-- M4 ✅ 递归目录、断点续传、失败重试
-- M5 ✅ Qt6 GUI
+1. `Import RFB core, UltraVNC/TightVNC backends, CLI and Qt GUI`
+2. `GUI: symmetric dual-pane tree browsers with folder-first sorting`
+3. `GUI: serial transfer queue with recursive directory jobs and cancel`
+4. `GUI: drag-and-drop between panes for files and directories`
+5. `Transfer: rate limiting, resume prompt, MD5 verification, keepalive, capability info, log dock`
+6. `Connection: libsecret password storage, probe button, profiles`
+7. `GUI: language switch and queue panel cleanup`
 
 协议细节见 [research/PROTOCOL_SPEC.md](research/PROTOCOL_SPEC.md)。
