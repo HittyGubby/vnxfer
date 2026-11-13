@@ -6,6 +6,7 @@
 
 #include "gui/session_worker.h"
 
+class QCheckBox;
 class QComboBox;
 class QFileSystemModel;
 class QLabel;
@@ -14,10 +15,9 @@ class QProgressBar;
 class QPushButton;
 class QSortFilterProxyModel;
 class QSpinBox;
+class QStandardItem;
 class QStandardItemModel;
 class QTreeView;
-class QCheckBox;
-class SessionWorker;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -40,8 +40,12 @@ private slots:
     void onFinished(const QString& what);
     void onFailed(const QString& what, const QString& message);
     void onRemoteDoubleClicked(const QModelIndex& index);
-    void goUp();
+    void onRemoteExpanded(const QModelIndex& index);
+    void remoteGoUp();
     void refreshRemote();
+    void localGoUp();
+    void refreshLocal();
+    void toggleHidden(bool show);
     void uploadSelected();
     void downloadSelected();
     void makeFolder();
@@ -51,15 +55,17 @@ private slots:
 
 private:
     void buildUi();
+    QWidget* buildBrowserPane(const QString& title, QLineEdit** pathEdit, QPushButton** up,
+                              QPushButton** refresh, QTreeView** view);
     void loadSettings();
     void saveSettings();
     void setBusy(bool busy);
-    QString remotePath() const;
+    void addHistory(const QString& entry);
+    QString endpoint() const;
     QString selectedRemotePath() const;
     bool selectedRemoteIsDir() const;
-    QString endpoint() const;
-    void addHistory(const QString& entry);
-    void refreshLocal();
+    void fillRemoteItem(QStandardItem* item, const QVector<RemoteEntryQt>& entries);
+    QStandardItem* findRemoteItem(const QString& path);
 
     QThread thread_;
     SessionWorker* worker_ = nullptr;
@@ -70,10 +76,15 @@ private:
     QCheckBox* remember_ = nullptr;
     QPushButton* connect_ = nullptr;
 
+    QLineEdit* localPathEdit_ = nullptr;
+    QPushButton* localUp_ = nullptr;
+    QPushButton* localRefresh_ = nullptr;
     QTreeView* localView_ = nullptr;
     QFileSystemModel* localModel_ = nullptr;
 
     QLineEdit* remotePathEdit_ = nullptr;
+    QPushButton* remoteUp_ = nullptr;
+    QPushButton* remoteRefresh_ = nullptr;
     QTreeView* remoteView_ = nullptr;
     QStandardItemModel* remoteModel_ = nullptr;
     QSortFilterProxyModel* remoteProxy_ = nullptr;
@@ -84,16 +95,16 @@ private:
     QPushButton* newFile_ = nullptr;
     QPushButton* delete_ = nullptr;
     QPushButton* rename_ = nullptr;
-    QPushButton* up_ = nullptr;
-    QPushButton* refresh_ = nullptr;
 
     QProgressBar* progress_ = nullptr;
     QLabel* status_ = nullptr;
 
-    QString remotePath_ = "/";
+    QString localRoot_;
+    QString remoteRoot_ = "/";
     QString initialPath_;
     QString pendingTempFile_;
     QString selftestRemote_;
     QString selftestLocal_;
     bool connected_ = false;
+    bool showHidden_ = false;
 };
