@@ -320,6 +320,12 @@ void MainWindow::buildUi() {
     auto* hiddenAction = viewMenu->addAction("Show hidden files");
     hiddenAction->setCheckable(true);
     connect(hiddenAction, &QAction::toggled, this, &MainWindow::toggleHidden);
+    auto* languageMenu = viewMenu->addMenu("Language");
+    auto* englishAction = languageMenu->addAction("English");
+    auto* chineseAction = languageMenu->addAction("中文");
+    connect(englishAction, &QAction::triggered, this, [this] { applyLanguage(false); });
+    connect(chineseAction, &QAction::triggered, this, [this] { applyLanguage(true); });
+
     auto* themeMenu = viewMenu->addMenu("Theme");
     auto* systemTheme = themeMenu->addAction("System");
     auto* fusionTheme = themeMenu->addAction("Fusion");
@@ -598,6 +604,30 @@ void MainWindow::refreshLocal() {
     localView_->setRootIndex(localModel_->index(localRoot_));
 }
 
+void MainWindow::applyLanguage(bool chinese) {
+    chinese_ = chinese;
+    QSettings().setValue("language", chinese ? "zh" : "en");
+    auto t = [chinese](const char* en, const char* zh) {
+        return chinese ? QString::fromUtf8(zh) : QString::fromUtf8(en);
+    };
+    connect_->setText(connected_ ? t("Disconnect", "断开") : t("Connect", "连接"));
+    probe_->setText(t("Probe", "探测"));
+    saveProfile_->setText(t("Save profile", "保存配置"));
+    upload_->setText(t("Upload →", "上传 →"));
+    download_->setText(t("← Download", "← 下载"));
+    newFolder_->setText(t("New folder", "新建文件夹"));
+    newFile_->setText(t("New file", "新建文件"));
+    delete_->setText(t("Delete", "删除"));
+    rename_->setText(t("Rename", "重命名"));
+    cancelJob_->setText(t("Cancel", "取消"));
+    localUp_->setText(t("Up", "上级"));
+    localRefresh_->setText(t("Refresh", "刷新"));
+    remoteUp_->setText(t("Up", "上级"));
+    remoteRefresh_->setText(t("Refresh", "刷新"));
+    remoteModel_->setHorizontalHeaderLabels(
+        {t("Name", "名称"), t("Size", "大小"), t("Modified", "修改时间")});
+}
+
 void MainWindow::onProbeClicked() {
     const QString host = history_->currentText().trimmed();
     if (host.isEmpty()) return;
@@ -773,6 +803,7 @@ void MainWindow::startNextJob() {
 void MainWindow::finishCurrentJob() {
     jobRunning_ = false;
     if (jobList_->count() > 0) delete jobList_->takeItem(0);
+    if (jobs_.isEmpty() && jobList_->count() == 0) jobList_->setVisible(false);
     startNextJob();
 }
 
@@ -935,6 +966,7 @@ void MainWindow::loadSettings() {
     port_->setValue(settings.value("port", 5900).toInt());
     remember_->setChecked(settings.value("remember", false).toBool());
     showHidden_ = settings.value("showHidden", false).toBool();
+    if (settings.value("language", "en").toString() == "zh") applyLanguage(true);
 
     QString savedPassword;
     if (vnxfer::keyring::available()) savedPassword = vnxfer::keyring::lookup(endpoint());

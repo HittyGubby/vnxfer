@@ -54,6 +54,7 @@ private slots:
     void onProbeClicked();
     void applyProfile(int index);
     void saveProfile();
+    void applyLanguage(bool chinese);
     void onVerified(const QString& remote, bool ok, const QString& detail);
     void uploadSelected();
     void downloadSelected();
@@ -132,6 +133,7 @@ private:
     QString capabilities_;
     bool jobRunning_ = false;
     bool verifyUploads_ = false;
+    bool chinese_ = false;
     int rateLimit_ = 0;
 
     QString localRoot_;
