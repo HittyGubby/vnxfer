@@ -63,6 +63,8 @@ private:
         QString label;
     };
 
+    void enqueueDownload(const QString& remote, bool isDir);
+    void enqueueUpload(const QString& local);
     void enqueueJob(const TransferJob& job);
     void startNextJob();
     void finishCurrentJob();

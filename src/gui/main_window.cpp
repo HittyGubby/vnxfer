@@ -1,7 +1,12 @@
 #include "gui/main_window.h"
 
 #include <QApplication>
+#include <QDataStream>
 #include <QCheckBox>
+#include <QDrag>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QUrl>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
@@ -51,6 +56,58 @@ QString humanSize(quint64 n) {
     }
     return QString::asprintf(u == 0 ? "%.0f %s" : "%.1f %s", v, units[u]);
 }
+
+constexpr const char* kRemoteMime = "application/x-vnxfer-remote";
+
+class DropTreeView : public QTreeView {
+public:
+    bool remoteSide = false;
+    std::function<void(const QString& path, bool isDir)> dropRemoteItem;
+    std::function<void(const QString& localPath)> dropLocalFile;
+
+protected:
+    void startDrag(Qt::DropActions actions) override {
+        if (!remoteSide) {
+            QTreeView::startDrag(actions);
+            return;
+        }
+        const auto indexes = selectionModel()->selectedRows(0);
+        if (indexes.isEmpty()) return;
+        QByteArray payload;
+        QDataStream stream(&payload, QIODevice::WriteOnly);
+        for (const auto& index : indexes) {
+            stream << index.data(kPathRole).toString() << index.data(kDirRole).toBool();
+        }
+        auto* mime = new QMimeData();
+        mime->setData(kRemoteMime, payload);
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->exec(Qt::CopyAction);
+    }
+
+    void dropEvent(QDropEvent* event) override {
+        if (remoteSide) {
+            if (event->mimeData()->hasUrls() && dropLocalFile) {
+                for (const QUrl& url : event->mimeData()->urls()) {
+                    if (url.isLocalFile()) dropLocalFile(url.toLocalFile());
+                }
+                event->acceptProposedAction();
+                return;
+            }
+        } else if (event->mimeData()->hasFormat(kRemoteMime) && dropRemoteItem) {
+            QDataStream stream(event->mimeData()->data(kRemoteMime));
+            while (!stream.atEnd()) {
+                QString path;
+                bool isDir = false;
+                stream >> path >> isDir;
+                dropRemoteItem(path, isDir);
+            }
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dropEvent(event);
+    }
+};
 
 // Directories first, then the regular sort order (name or the column's sort role).
 class FolderFirstProxy : public QSortFilterProxyModel {
@@ -107,10 +164,15 @@ QWidget* MainWindow::buildBrowserPane(const QString& title, QLineEdit** pathEdit
     header->addWidget(*pathEdit, 1);
     layout->addLayout(header);
 
-    *view = new QTreeView();
-    (*view)->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    (*view)->setSortingEnabled(true);
-    layout->addWidget(*view, 1);
+    auto* tree = new DropTreeView();
+    tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    tree->setSortingEnabled(true);
+    tree->setDragEnabled(true);
+    tree->setAcceptDrops(true);
+    tree->setDropIndicatorShown(true);
+    tree->setDragDropMode(QAbstractItemView::DragDrop);
+    *view = tree;
+    layout->addWidget(tree, 1);
     return pane;
 }
 
@@ -251,6 +313,15 @@ void MainWindow::buildUi() {
     connect(localRefresh_, &QPushButton::clicked, this, &MainWindow::refreshLocal);
     connect(remoteUp_, &QPushButton::clicked, this, &MainWindow::remoteGoUp);
     connect(remoteRefresh_, &QPushButton::clicked, this, &MainWindow::refreshRemote);
+    auto* localTree = static_cast<DropTreeView*>(localView_);
+    localTree->remoteSide = false;
+    localTree->dropRemoteItem = [this](const QString& path, bool isDir) {
+        enqueueDownload(path, isDir);
+    };
+    auto* remoteTree = static_cast<DropTreeView*>(remoteView_);
+    remoteTree->remoteSide = true;
+    remoteTree->dropLocalFile = [this](const QString& localPath) { enqueueUpload(localPath); };
+
     connect(remoteView_, &QTreeView::doubleClicked, this, &MainWindow::onRemoteDoubleClicked);
     connect(remoteView_, &QTreeView::expanded, this, &MainWindow::onRemoteExpanded);
     connect(localPathEdit_, &QLineEdit::returnPressed, this, [this] {
@@ -497,19 +568,29 @@ void MainWindow::uploadSelected() {
     if (!connected_) return;
     const auto indexes = localView_->selectionModel()->selectedRows(0);
     if (indexes.isEmpty()) return;
-    const QString local = localModel_->filePath(indexes.first());
+    enqueueUpload(localModel_->filePath(indexes.first()));
+}
+
+void MainWindow::enqueueDownload(const QString& remote, bool isDir) {
+    const QString name = QFileInfo(remote).fileName();
+    const QString local = QDir(localRoot_).filePath(name);
+    if (isDir) {
+        enqueueJob({"download-tree", remote, local, "↓ " + name + "/"});
+    } else {
+        enqueueJob({"download", remote, local, "↓ " + name});
+    }
+}
+
+void MainWindow::enqueueUpload(const QString& local) {
     QFileInfo info(local);
     QString remote = remoteRoot_;
     if (!remote.endsWith('/')) remote += '/';
     remote += info.fileName();
-
-    TransferJob job;
     if (info.isDir()) {
-        job = {"upload-tree", local, remote, "↑ " + info.fileName() + "/"};
+        enqueueJob({"upload-tree", local, remote, "↑ " + info.fileName() + "/"});
     } else {
-        job = {"upload", local, remote, "↑ " + info.fileName()};
+        enqueueJob({"upload", local, remote, "↑ " + info.fileName()});
     }
-    enqueueJob(job);
 }
 
 void MainWindow::enqueueJob(const TransferJob& job) {
@@ -569,16 +650,14 @@ void MainWindow::downloadSelected() {
         const QString selected = localModel_->filePath(indexes.first());
         localDir = QFileInfo(selected).isDir() ? selected : QFileInfo(selected).path();
     }
+    const bool isDir = selectedRemoteIsDir();
     const QString name = QFileInfo(remote).fileName();
     const QString local = QDir(localDir).filePath(name);
-
-    TransferJob job;
-    if (selectedRemoteIsDir()) {
-        job = {"download-tree", remote, local, "↓ " + name + "/"};
+    if (isDir) {
+        enqueueJob({"download-tree", remote, local, "↓ " + name + "/"});
     } else {
-        job = {"download", remote, local, "↓ " + name};
+        enqueueJob({"download", remote, local, "↓ " + name});
     }
-    enqueueJob(job);
 }
 
 void MainWindow::makeFolder() {
