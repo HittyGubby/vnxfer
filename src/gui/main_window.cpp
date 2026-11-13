@@ -26,6 +26,9 @@
 #include <QMessageBox>
 #include <QDockWidget>
 #include <QPlainTextEdit>
+#include <QPainter>
+#include <QMouseEvent>
+#include <QStyledItemDelegate>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
@@ -36,6 +39,7 @@
 #include <QStandardItemModel>
 #include <QStyleFactory>
 #include <QTemporaryFile>
+#include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
 
@@ -61,6 +65,25 @@ QString humanSize(quint64 n) {
 }
 
 constexpr const char* kRemoteMime = "application/x-vnxfer-remote";
+
+// Paints a clickable "x" on the right edge of every history entry.
+class HistoryDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    std::function<void(int)> removeRequested;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        QStyledItemDelegate::paint(painter, option, index);
+        QRect closeRect(option.rect.right() - 18, option.rect.top(), 18, option.rect.height());
+        painter->save();
+        painter->setPen(option.state & QStyle::State_Selected ? Qt::white : Qt::gray);
+        painter->drawText(closeRect, Qt::AlignCenter, QString::fromUtf8("×"));
+        painter->restore();
+    }
+
+
+};
 
 class DropTreeView : public QTreeView {
 public:
@@ -195,7 +218,15 @@ void MainWindow::buildUi() {
     history_ = new QComboBox();
     history_->setEditable(true);
     history_->setMinimumWidth(200);
+    auto* historyDelegate = new HistoryDelegate(this);
+    historyDelegate->removeRequested = [this](int row) { removeHistoryAt(row); };
+    history_->setItemDelegate(historyDelegate);
+    history_->view()->viewport()->installEventFilter(this);
     top->addWidget(history_);
+    forgetButton_ = new QToolButton();
+    forgetButton_->setText(QString::fromUtf8("×"));
+    forgetButton_->setToolTip("Forget this host");
+    top->addWidget(forgetButton_);
     top->addWidget(new QLabel("Port:"));
     port_ = new QSpinBox();
     port_->setRange(1, 65535);
@@ -306,14 +337,6 @@ void MainWindow::buildUi() {
     verifyAction_->setCheckable(true);
     verifyAction_->setChecked(verifyUploads_);
     connect(verifyAction_, &QAction::toggled, this, [this](bool on) { verifyUploads_ = on; });
-    forgetAction_ = settingsMenu->addAction("Forget this host");
-    connect(forgetAction_, &QAction::triggered, this, &MainWindow::forgetHost);
-    clearHistoryAction_ = settingsMenu->addAction("Clear history");
-    connect(clearHistoryAction_, &QAction::triggered, this, [this] {
-        QSettings().remove("history");
-        history_->clear();
-        status_->setText("history cleared");
-    });
     auto* connectionMenu = menuBar()->addMenu("Connection");
     infoAction_ = connectionMenu->addAction("Info");
     connect(infoAction_, &QAction::triggered, this, &MainWindow::showConnectionInfo);
@@ -373,6 +396,8 @@ void MainWindow::buildUi() {
 
     connect(remoteView_, &QTreeView::doubleClicked, this, &MainWindow::onRemoteDoubleClicked);
     connect(remoteView_, &QTreeView::expanded, this, &MainWindow::onRemoteExpanded);
+    connect(remoteView_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            [this](const QItemSelection&, const QItemSelection&) { onRemoteSelectionChanged(); });
     connect(localPathEdit_, &QLineEdit::returnPressed, this, [this] {
         const QString path = localPathEdit_->text();
         if (QDir(path).exists()) {
@@ -386,6 +411,7 @@ void MainWindow::buildUi() {
         QStandardItem* item = findRemoteItem(path);
         if (item) {
             remoteRoot_ = path;
+            currentRemoteDir_ = path;
             remoteView_->setRootIndex(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
         } else {
             refreshRemote();
@@ -412,6 +438,8 @@ void MainWindow::autoConnect(const QString& host, int port, const QString& passw
 }
 
 void MainWindow::setInitialPath(const QString& path) { initialPath_ = path; }
+
+void MainWindow::enableUploadTest(const QString& local) { uploadTestLocal_ = local; }
 
 void MainWindow::enableSelfTest(const QString& remote, const QString& local) {
     selftestRemote_ = remote;
@@ -461,8 +489,6 @@ void MainWindow::onConnected(const QString& protocol, const QString& root) {
     status_->setText(QString("Connected: %1").arg(protocol));
     connect_->setText("Disconnect");
     addHistory(history_->currentText().trimmed());
-    QSettings().setValue("lastPath/" + endpoint(), remoteRoot_);
-    QSettings().setValue("lastPort/" + endpoint(), port_->value());
 
     remoteModel_->clear();
     remoteModel_->setHorizontalHeaderLabels({"Name", "Size", "Modified"});
@@ -470,10 +496,17 @@ void MainWindow::onConnected(const QString& protocol, const QString& root) {
     initialPath_.clear();
     if (remoteRoot_.isEmpty()) remoteRoot_ = "/";
     if (!remoteRoot_.startsWith('/')) remoteRoot_.prepend('/');
+    currentRemoteDir_ = remoteRoot_;
+    remotePathEdit_->setText(currentRemoteDir_);
+    QSettings().setValue("lastPath/" + endpoint(), currentRemoteDir_);
+    QSettings().setValue("lastPort/" + endpoint(), port_->value());
     refreshRemote();
 
     if (!selftestRemote_.isEmpty()) {
         enqueueJob({"download", selftestRemote_, selftestLocal_, "selftest"});
+    }
+    if (!uploadTestLocal_.isEmpty()) {
+        enqueueUpload(uploadTestLocal_);
     }
 }
 
@@ -496,7 +529,8 @@ void MainWindow::onListed(const QString& path, const QVector<RemoteEntryQt>& ent
         fillRemoteItem(item, entries);
         remoteView_->setRootIndex(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
         remoteView_->expand(remoteProxy_->mapFromSource(remoteModel_->indexFromItem(item)));
-        remotePathEdit_->setText(path);
+        if (currentRemoteDir_.isEmpty()) currentRemoteDir_ = path;
+        remotePathEdit_->setText(currentRemoteDir_);
         setBusy(false);
         return;
     }
@@ -552,6 +586,17 @@ QStandardItem* MainWindow::findRemoteItem(const QString& path) {
     return remoteModel_->itemFromIndex(matches.first());
 }
 
+void MainWindow::onRemoteSelectionChanged() {
+    const QModelIndex index = remoteView_->currentIndex();
+    if (!index.isValid()) return;
+    const QString path = index.data(kPathRole).toString();
+    if (path.isEmpty()) return;
+    const bool isDir = index.data(kDirRole).toBool();
+    currentRemoteDir_ = isDir ? path : QFileInfo(path).path();
+    if (currentRemoteDir_.isEmpty()) currentRemoteDir_ = "/";
+    remotePathEdit_->setText(currentRemoteDir_);
+}
+
 void MainWindow::onRemoteExpanded(const QModelIndex& index) {
     const QModelIndex source = remoteProxy_->mapToSource(index);
     QStandardItem* item = remoteModel_->itemFromIndex(source);
@@ -582,6 +627,7 @@ void MainWindow::remoteGoUp() {
     if (path.endsWith('/')) path.chop(1);
     const int pos = path.lastIndexOf('/');
     remoteRoot_ = pos <= 0 ? "/" : path.left(pos);
+    currentRemoteDir_ = remoteRoot_;
     setBusy(true);
     QMetaObject::invokeMethod(worker_, "list", Qt::QueuedConnection, Q_ARG(QString, remoteRoot_));
 }
@@ -618,8 +664,7 @@ void MainWindow::applyLanguage(bool chinese) {
     verifyAction_->setText(t("Verify uploads (MD5)", "上传 MD5 校验"));
     infoAction_->setText(t("Info", "信息"));
     hiddenAction_->setText(t("Show hidden files", "显示隐藏文件"));
-    forgetAction_->setText(t("Forget this host", "忘记此主机"));
-    clearHistoryAction_->setText(t("Clear history", "清空历史"));
+
     upload_->setText(t("Upload →", "上传 →"));
     download_->setText(t("← Download", "← 下载"));
     newFolder_->setText(t("New folder", "新建文件夹"));
@@ -644,21 +689,38 @@ void MainWindow::onProbeClicked() {
                               Q_ARG(QString, password_->text()));
 }
 
-void MainWindow::forgetHost() {
-    const QString host = history_->currentText().trimmed();
+void MainWindow::removeHistoryAt(int row) {
+    const QString host = history_->itemText(row).trimmed();
+    if (!host.isEmpty()) removeHost(host);
+}
+
+void MainWindow::removeHost(const QString& host) {
     if (host.isEmpty()) return;
-    const QString ep = endpoint();
+    if (QMessageBox::question(this, "vnxfer", QString("Forget %1?").arg(host)) !=
+        QMessageBox::Yes) {
+        return;
+    }
     QSettings settings;
     QStringList history = settings.value("history").toStringList();
     history.removeAll(host);
     settings.setValue("history", history);
-    settings.remove("passwords/" + ep);
-    settings.remove("lastPath/" + ep);
-    if (vnxfer::keyring::available()) vnxfer::keyring::remove(ep);
+
+    // Drop every saved endpoint that belongs to this host.
+    const QString prefixPw = "passwords/" + host + ":";
+    const QString prefixPath = "lastPath/" + host + ":";
+    const QString prefixPort = "lastPort/" + host + ":";
+    for (const QString& key : settings.allKeys()) {
+        if (key.startsWith(prefixPw) || key.startsWith(prefixPath) || key.startsWith(prefixPort)) {
+            const QString ep = key.section('/', 1);
+            if (vnxfer::keyring::available()) vnxfer::keyring::remove(ep);
+            settings.remove(key);
+        }
+    }
 
     history_->blockSignals(true);
     history_->clear();
     history_->addItems(history);
+    history_->setCurrentText(host);
     history_->blockSignals(false);
     status_->setText("forgot " + host);
 }
@@ -732,7 +794,8 @@ void MainWindow::enqueueDownload(const QString& remote, bool isDir) {
 
 void MainWindow::enqueueUpload(const QString& local) {
     QFileInfo info(local);
-    QString remote = remoteRoot_;
+    const QString targetDir = currentRemoteDir_.isEmpty() ? remoteRoot_ : currentRemoteDir_;
+    QString remote = targetDir;
     if (!remote.endsWith('/')) remote += '/';
     remote += info.fileName();
     if (info.isDir()) {
@@ -863,7 +926,7 @@ void MainWindow::makeFolder() {
     const QString name = QInputDialog::getText(this, "New folder", "Name:", QLineEdit::Normal,
                                                "new-folder", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
-    QString path = remoteRoot_;
+    QString path = currentRemoteDir_.isEmpty() ? remoteRoot_ : currentRemoteDir_;
     if (!path.endsWith('/')) path += '/';
     path += name.trimmed();
     enqueueJob({"mkdir", path, {}, "mkdir " + name.trimmed()});
@@ -884,7 +947,7 @@ void MainWindow::makeFile() {
     delete temp;
     pendingTempFile_ = tempPath;
 
-    QString path = remoteRoot_;
+    QString path = currentRemoteDir_.isEmpty() ? remoteRoot_ : currentRemoteDir_;
     if (!path.endsWith('/')) path += '/';
     path += name.trimmed();
     enqueueJob({"upload", tempPath, path, "new file " + name.trimmed()});
@@ -971,6 +1034,24 @@ void MainWindow::addHistory(const QString& entry) {
     history_->blockSignals(false);
 }
 
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (history_ && watched == history_->view()->viewport() &&
+        (event->type() == QEvent::MouseButtonPress ||
+         event->type() == QEvent::MouseButtonRelease)) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        QAbstractItemView* view = history_->view();
+        const QModelIndex index = view->indexAt(mouse->pos());
+        if (index.isValid()) {
+            const QRect rect = view->visualRect(index);
+            if (mouse->pos().x() > rect.right() - 22) {
+                if (event->type() == QEvent::MouseButtonPress) removeHistoryAt(index.row());
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
     QMainWindow::closeEvent(event);
@@ -993,6 +1074,32 @@ void MainWindow::loadSettings() {
     }
     password_->setText(savedPassword);
 
+
+    // Editing the password or port refreshes the saved entry for this host.
+    connect(password_, &QLineEdit::editingFinished, this, [this] {
+        if (!remember_->isChecked()) return;
+        const QString host = history_->currentText().trimmed();
+        if (host.isEmpty()) return;
+        const QString ep = QString("%1:%2").arg(host).arg(port_->value());
+        bool stored = false;
+        if (vnxfer::keyring::available()) stored = vnxfer::keyring::store(ep, password_->text());
+        if (stored) {
+            QSettings().remove("passwords/" + ep);
+        } else {
+            QSettings().setValue("passwords/" + ep,
+                                 QString::fromLatin1(password_->text().toUtf8().toBase64()));
+        }
+        addHistory(host);
+    });
+    connect(port_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        const QString host = history_->currentText().trimmed();
+        if (host.isEmpty()) return;
+        QSettings().setValue(QString("lastPort/%1:%2").arg(host).arg(value), value);
+    });
+
+    connect(forgetButton_, &QToolButton::clicked, this, [this] {
+        removeHost(history_->currentText().trimmed());
+    });
 
     connect(history_, &QComboBox::currentTextChanged, this, [this](const QString& host) {
         if (host.trimmed().isEmpty()) return;

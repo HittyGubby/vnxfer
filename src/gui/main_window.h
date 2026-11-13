@@ -9,6 +9,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QToolButton;
 class QListWidget;
 class QPlainTextEdit;
 class QFileSystemModel;
@@ -32,9 +33,11 @@ public:
     void autoConnect(const QString& host, int port, const QString& password);
     void setInitialPath(const QString& path);
     void enableSelfTest(const QString& remote, const QString& local);
+    void enableUploadTest(const QString& local);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onConnectClicked();
@@ -45,6 +48,7 @@ private slots:
     void onFailed(const QString& what, const QString& message);
     void onRemoteDoubleClicked(const QModelIndex& index);
     void onRemoteExpanded(const QModelIndex& index);
+    void onRemoteSelectionChanged();
     void remoteGoUp();
     void refreshRemote();
     void localGoUp();
@@ -53,7 +57,8 @@ private slots:
     void configureRateLimit();
     void showConnectionInfo();
     void onProbeClicked();
-    void forgetHost();
+    void removeHistoryAt(int row);
+    void removeHost(const QString& host);
     void applyLanguage(bool chinese);
     void onVerified(const QString& remote, bool ok, const QString& detail);
     void uploadSelected();
@@ -95,6 +100,7 @@ private:
     SessionWorker* worker_ = nullptr;
 
     QComboBox* history_ = nullptr;
+    QToolButton* forgetButton_ = nullptr;
     QSpinBox* port_ = nullptr;
     QLineEdit* password_ = nullptr;
     QCheckBox* remember_ = nullptr;
@@ -138,15 +144,16 @@ private:
     QAction* verifyAction_ = nullptr;
     QAction* infoAction_ = nullptr;
     QAction* hiddenAction_ = nullptr;
-    QAction* forgetAction_ = nullptr;
-    QAction* clearHistoryAction_ = nullptr;
+
 
     QString localRoot_;
     QString remoteRoot_ = "/";
+    QString currentRemoteDir_;
     QString initialPath_;
     QString pendingTempFile_;
     QString selftestRemote_;
     QString selftestLocal_;
+    QString uploadTestLocal_;
     bool connected_ = false;
     bool showHidden_ = false;
 };

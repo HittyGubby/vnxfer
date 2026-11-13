@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
             window.autoConnect(host, port > 0 ? port : 5900, password);
         } else if (args[i] == "--selftest" && i + 2 < args.size()) {
             window.enableSelfTest(args[i + 1], args[i + 2]);
+        } else if (args[i] == "--uploadtest" && i + 1 < args.size()) {
+            window.enableUploadTest(args[i + 1]);
         }
     }
     return app.exec();
