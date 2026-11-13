@@ -21,8 +21,11 @@ bool SessionWorker::reconnect() {
 
 template <typename Fn>
 void SessionWorker::guarded(const QString& what, Fn&& fn) {
+    canceling_ = false;
     try {
-        vnxfer::with_retry(retry_, [&](int attempt) {
+        const vnxfer::RetryPolicy policy = retry_;
+        vnxfer::with_retry(policy, [&](int attempt) {
+            if (canceling_) throw std::runtime_error("cancelled");
             if (attempt > 0 && !reconnect()) {
                 throw std::runtime_error("reconnect failed");
             }
@@ -102,6 +105,49 @@ void SessionWorker::upload(const QString& local, const QString& remote, bool ove
                              emit progress(done, total);
                          });
     });
+}
+
+void SessionWorker::downloadTree(const QString& remote, const QString& local) {
+    guarded("download", [&] {
+        QElapsedTimer timer;
+        timer.start();
+        quint64 last_emit = 0;
+        vnxfer::TransferStats stats;
+        vnxfer::download_tree(*session_, remote.toStdString(), local.toStdString(),
+                              [&](uint64_t done, uint64_t total) {
+                                  if (timer.elapsed() - static_cast<qint64>(last_emit) < 100 &&
+                                      done != total) {
+                                      return;
+                                  }
+                                  last_emit = static_cast<quint64>(timer.elapsed());
+                                  emit progress(done, total);
+                              },
+                              stats);
+    });
+}
+
+void SessionWorker::uploadTree(const QString& local, const QString& remote) {
+    guarded("upload", [&] {
+        QElapsedTimer timer;
+        timer.start();
+        quint64 last_emit = 0;
+        vnxfer::TransferStats stats;
+        vnxfer::upload_tree(*session_, local.toStdString(), remote.toStdString(), true,
+                            [&](uint64_t done, uint64_t total) {
+                                if (timer.elapsed() - static_cast<qint64>(last_emit) < 100 &&
+                                    done != total) {
+                                    return;
+                                }
+                                last_emit = static_cast<quint64>(timer.elapsed());
+                                emit progress(done, total);
+                            },
+                            stats);
+    });
+}
+
+void SessionWorker::cancel() {
+    canceling_ = true;
+    session_.reset();
 }
 
 void SessionWorker::makeDir(const QString& path) {

@@ -14,6 +14,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QItemSelectionModel>
+#include <QListWidget>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -205,8 +206,14 @@ void MainWindow::buildUi() {
     status_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     auto* bottom = new QHBoxLayout();
     bottom->addWidget(progress_, 1);
+    bottom->addWidget(cancelJob_ = new QPushButton("Cancel"));
     bottom->addWidget(status_);
     root->addLayout(bottom);
+
+    jobList_ = new QListWidget();
+    jobList_->setMaximumHeight(90);
+    jobList_->setVisible(false);
+    root->addWidget(jobList_);
 
     setCentralWidget(central);
 
@@ -225,6 +232,15 @@ void MainWindow::buildUi() {
     });
 
     connect(connect_, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
+    connect(cancelJob_, &QPushButton::clicked, this, [this] {
+        jobs_.clear();
+        jobList_->clear();
+        jobList_->setVisible(false);
+        jobRunning_ = false;
+        QMetaObject::invokeMethod(worker_, "cancel", Qt::QueuedConnection);
+        setBusy(false);
+        status_->setText("cancelled");
+    });
     connect(upload_, &QPushButton::clicked, this, &MainWindow::uploadSelected);
     connect(download_, &QPushButton::clicked, this, &MainWindow::downloadSelected);
     connect(newFolder_, &QPushButton::clicked, this, &MainWindow::makeFolder);
@@ -326,9 +342,7 @@ void MainWindow::onConnected(const QString& protocol, const QString& root) {
     refreshRemote();
 
     if (!selftestRemote_.isEmpty()) {
-        setBusy(true);
-        QMetaObject::invokeMethod(worker_, "download", Qt::QueuedConnection,
-                                  Q_ARG(QString, selftestRemote_), Q_ARG(QString, selftestLocal_));
+        enqueueJob({"download", selftestRemote_, selftestLocal_, "selftest"});
     }
 }
 
@@ -485,36 +499,86 @@ void MainWindow::uploadSelected() {
     if (indexes.isEmpty()) return;
     const QString local = localModel_->filePath(indexes.first());
     QFileInfo info(local);
-    if (info.isDir()) {
-        QMessageBox::information(this, "vnxfer",
-                                 "Directory upload is available in the CLI (--recursive).");
-        return;
-    }
     QString remote = remoteRoot_;
     if (!remote.endsWith('/')) remote += '/';
     remote += info.fileName();
+
+    TransferJob job;
+    if (info.isDir()) {
+        job = {"upload-tree", local, remote, "↑ " + info.fileName() + "/"};
+    } else {
+        job = {"upload", local, remote, "↑ " + info.fileName()};
+    }
+    enqueueJob(job);
+}
+
+void MainWindow::enqueueJob(const TransferJob& job) {
+    jobs_.enqueue(job);
+    jobList_->addItem("queued: " + job.label);
+    jobList_->setVisible(true);
+    if (!jobRunning_) startNextJob();
+}
+
+void MainWindow::startNextJob() {
+    if (jobs_.isEmpty()) {
+        jobRunning_ = false;
+        return;
+    }
+    const TransferJob job = jobs_.dequeue();
+    jobRunning_ = true;
+    if (jobList_->count() > 0) delete jobList_->takeItem(0);
+    jobList_->insertItem(0, "running: " + job.label);
     setBusy(true);
-    QMetaObject::invokeMethod(worker_, "upload", Qt::QueuedConnection, Q_ARG(QString, local),
-                              Q_ARG(QString, remote), Q_ARG(bool, true));
+    status_->setText(job.label);
+
+    if (job.kind == "upload") {
+        QMetaObject::invokeMethod(worker_, "upload", Qt::QueuedConnection, Q_ARG(QString, job.a),
+                                  Q_ARG(QString, job.b), Q_ARG(bool, true));
+    } else if (job.kind == "download") {
+        QMetaObject::invokeMethod(worker_, "download", Qt::QueuedConnection, Q_ARG(QString, job.a),
+                                  Q_ARG(QString, job.b));
+    } else if (job.kind == "upload-tree") {
+        QMetaObject::invokeMethod(worker_, "uploadTree", Qt::QueuedConnection,
+                                  Q_ARG(QString, job.a), Q_ARG(QString, job.b));
+    } else if (job.kind == "download-tree") {
+        QMetaObject::invokeMethod(worker_, "downloadTree", Qt::QueuedConnection,
+                                  Q_ARG(QString, job.a), Q_ARG(QString, job.b));
+    } else if (job.kind == "mkdir") {
+        QMetaObject::invokeMethod(worker_, "makeDir", Qt::QueuedConnection, Q_ARG(QString, job.a));
+    } else if (job.kind == "remove") {
+        QMetaObject::invokeMethod(worker_, "removePath", Qt::QueuedConnection, Q_ARG(QString, job.a));
+    } else if (job.kind == "rename") {
+        QMetaObject::invokeMethod(worker_, "renamePath", Qt::QueuedConnection, Q_ARG(QString, job.a),
+                                  Q_ARG(QString, job.b));
+    }
+}
+
+void MainWindow::finishCurrentJob() {
+    jobRunning_ = false;
+    if (jobList_->count() > 0) delete jobList_->takeItem(0);
+    startNextJob();
 }
 
 void MainWindow::downloadSelected() {
     if (!connected_) return;
     const QString remote = selectedRemotePath();
-    if (remote.isEmpty() || selectedRemoteIsDir()) {
-        QMessageBox::information(this, "vnxfer", "Select a remote file to download.");
-        return;
-    }
+    if (remote.isEmpty()) return;
     const auto indexes = localView_->selectionModel()->selectedRows(0);
     QString localDir = localRoot_;
     if (!indexes.isEmpty()) {
         const QString selected = localModel_->filePath(indexes.first());
         localDir = QFileInfo(selected).isDir() ? selected : QFileInfo(selected).path();
     }
-    const QString local = QDir(localDir).filePath(QFileInfo(remote).fileName());
-    setBusy(true);
-    QMetaObject::invokeMethod(worker_, "download", Qt::QueuedConnection, Q_ARG(QString, remote),
-                              Q_ARG(QString, local));
+    const QString name = QFileInfo(remote).fileName();
+    const QString local = QDir(localDir).filePath(name);
+
+    TransferJob job;
+    if (selectedRemoteIsDir()) {
+        job = {"download-tree", remote, local, "↓ " + name + "/"};
+    } else {
+        job = {"download", remote, local, "↓ " + name};
+    }
+    enqueueJob(job);
 }
 
 void MainWindow::makeFolder() {
@@ -526,8 +590,7 @@ void MainWindow::makeFolder() {
     QString path = remoteRoot_;
     if (!path.endsWith('/')) path += '/';
     path += name.trimmed();
-    setBusy(true);
-    QMetaObject::invokeMethod(worker_, "makeDir", Qt::QueuedConnection, Q_ARG(QString, path));
+    enqueueJob({"mkdir", path, {}, "mkdir " + name.trimmed()});
 }
 
 void MainWindow::makeFile() {
@@ -548,9 +611,7 @@ void MainWindow::makeFile() {
     QString path = remoteRoot_;
     if (!path.endsWith('/')) path += '/';
     path += name.trimmed();
-    setBusy(true);
-    QMetaObject::invokeMethod(worker_, "upload", Qt::QueuedConnection, Q_ARG(QString, tempPath),
-                              Q_ARG(QString, path), Q_ARG(bool, true));
+    enqueueJob({"upload", tempPath, path, "new file " + name.trimmed()});
 }
 
 void MainWindow::deleteSelected() {
@@ -558,8 +619,7 @@ void MainWindow::deleteSelected() {
     const QString path = selectedRemotePath();
     if (path.isEmpty()) return;
     if (QMessageBox::question(this, "Delete", "Delete " + path + "?") != QMessageBox::Yes) return;
-    setBusy(true);
-    QMetaObject::invokeMethod(worker_, "removePath", Qt::QueuedConnection, Q_ARG(QString, path));
+    enqueueJob({"remove", path, {}, "delete " + QFileInfo(path).fileName()});
 }
 
 void MainWindow::renameSelected() {
@@ -574,9 +634,7 @@ void MainWindow::renameSelected() {
     QString parent = path.left(path.lastIndexOf('/'));
     if (parent.isEmpty()) parent = "/";
     const QString target = parent + "/" + name.trimmed();
-    setBusy(true);
-    QMetaObject::invokeMethod(worker_, "renamePath", Qt::QueuedConnection, Q_ARG(QString, path),
-                              Q_ARG(QString, target));
+    enqueueJob({"rename", path, target, "rename " + oldName});
 }
 
 void MainWindow::onProgress(quint64 done, quint64 total) {
@@ -600,6 +658,7 @@ void MainWindow::onFinished(const QString& what) {
         QFile::remove(pendingTempFile_);
         pendingTempFile_.clear();
     }
+    finishCurrentJob();
 }
 
 void MainWindow::onFailed(const QString& what, const QString& message) {
@@ -611,6 +670,7 @@ void MainWindow::onFailed(const QString& what, const QString& message) {
         connect_->setText("Connect");
     }
     QMessageBox::warning(this, "vnxfer", QString("%1 failed:\n%2").arg(what, message));
+    finishCurrentJob();
 }
 
 void MainWindow::addHistory(const QString& entry) {

@@ -34,9 +34,12 @@ public slots:
     void list(const QString& path);
     void download(const QString& remote, const QString& local);
     void upload(const QString& local, const QString& remote, bool overwrite);
+    void downloadTree(const QString& remote, const QString& local);
+    void uploadTree(const QString& local, const QString& remote);
     void makeDir(const QString& path);
     void removePath(const QString& path);
     void renamePath(const QString& from, const QString& to);
+    void cancel();
 
 signals:
     void connected(const QString& protocol, const QString& root);
@@ -54,4 +57,5 @@ private:
     std::unique_ptr<vnxfer::FtSession> session_;
     vnxfer::ConnectionOptions options_;
     vnxfer::RetryPolicy retry_;
+    bool canceling_ = false;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QQueue>
 #include <QThread>
 #include <QVector>
 
@@ -8,6 +9,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QListWidget;
 class QFileSystemModel;
 class QLabel;
 class QLineEdit;
@@ -54,6 +56,17 @@ private slots:
     void renameSelected();
 
 private:
+    struct TransferJob {
+        QString kind;
+        QString a;
+        QString b;
+        QString label;
+    };
+
+    void enqueueJob(const TransferJob& job);
+    void startNextJob();
+    void finishCurrentJob();
+
     void buildUi();
     QWidget* buildBrowserPane(const QString& title, QLineEdit** pathEdit, QPushButton** up,
                               QPushButton** refresh, QTreeView** view);
@@ -98,6 +111,10 @@ private:
 
     QProgressBar* progress_ = nullptr;
     QLabel* status_ = nullptr;
+    QListWidget* jobList_ = nullptr;
+    QPushButton* cancelJob_ = nullptr;
+    QQueue<TransferJob> jobs_;
+    bool jobRunning_ = false;
 
     QString localRoot_;
     QString remoteRoot_ = "/";
