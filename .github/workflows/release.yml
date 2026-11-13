@@ -33,7 +33,10 @@ jobs:
             build/*.rpm
 
   macos:
-    runs-on: macos-14
+    # Public-repo macOS minutes are heavily rate limited; try the Intel image and
+    # never block the other platform artefacts on it.
+    runs-on: macos-13
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -78,7 +81,7 @@ jobs:
           path: build/*.zip
 
   release:
-    needs: [linux, macos]
+    needs: [linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
