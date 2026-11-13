@@ -24,7 +24,17 @@ ProbeResult probe_ultravnc(RfbClient& client) {
     client.send_ft(rfb::kFtAbortFileTransfer, 3, 0, {});
 
     FtMessage msg;
-    if (!client.read_ft_message(msg, 3000)) {
+    bool got = false;
+    for (int i = 0; i < 6; ++i) {
+        if (!client.read_ft_message(msg, 3000)) break;
+        if (msg.ctype == rfb::kFtProtocolVersion || msg.ctype == rfb::kFtSessionStart ||
+            msg.ctype == rfb::kFtSessionEnd) {
+            continue;
+        }
+        got = true;
+        break;
+    }
+    if (!got) {
         result.detail = "no reply to permission probe (server does not speak UltraVNC FT)";
         return result;
     }

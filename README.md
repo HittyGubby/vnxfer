@@ -63,6 +63,23 @@ cd build && cpack -G "TGZ;DEB;RPM"   # 或 ZIP / DragNDrop
 | TightVNC 2.x（0xFC0001xx） | Tight 认证 + caps 含 `0xFC000100` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | TightVNC 1.3（130–136） | Tight 认证 + caps 含 130–135 | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
 
+### 版本兼容
+
+| 服务端 | 状态 |
+|---|---|
+| TightVNC 2.8.x | 已实机验证（e2e 18/18） |
+| TightVNC 4.0.x | 协议层适配完成：Echo 心跳（caps 宣告时）、RFB 3.8 协商；待实机验证 |
+| UltraVNC 1.8.x | 协议层适配完成：FT v3/v4 的 17/15/16 控制消息识别并忽略；待实机验证 |
+| UltraVNC 1.2–1.4 / libvncserver | 已验证（e2e 18/18） |
+| TightVNC 1.3.x | 已验证（列表/读写/建目录） |
+
+## 已知限制
+
+- **TLS 1.3 未实现**：TightVNC 4 Pro 的加密会话暂不支持。
+- **Unicode 目录项未启用**：UltraVNC v4 的中文文件名目录需要请求 0x8000 并按 unicode 结构解析，当前仍走 ANSI。
+- **TightVNC 4 / UltraVNC 1.8 未实机验证**：适配基于官方 changelog 与源码，装好后跑 tests/e2e.sh 确认。
+- **Windows 包**只含可执行文件，Qt 运行库未静态打包。
+
 ## 已验证
 
 | 服务端 | 结果 |

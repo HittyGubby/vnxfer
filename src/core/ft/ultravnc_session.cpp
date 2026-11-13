@@ -66,13 +66,14 @@ public:
     std::string describe() const override { return "ultravnc"; }
     std::string default_root() const override { return "/"; }
     std::string capabilities() const override {
-        return "UltraVNC (message type 7): list, download, upload, mkdir, rm, rename, drives";
+        return "UltraVNC (message type 7, FT v" + std::to_string(ft_version_) +
+               "): list, download, upload, mkdir, rm, rename, drives";
     }
 
     void ping() override {
         client_.send_ft(rfb::kFtAbortFileTransfer, 3, 0, {});
         FtMessage msg;
-        if (!client_.read_ft_message(msg, 5000)) throw std::runtime_error("keepalive failed");
+        if (!next_ft(msg, 5000)) throw std::runtime_error("keepalive failed");
     }
 
     std::vector<RemoteEntry> list(const std::string& path) override {
@@ -81,7 +82,7 @@ public:
 
         std::vector<RemoteEntry> entries;
         FtMessage msg;
-        while (client_.read_ft_message(msg, timeout_ms_)) {
+        while (next_ft(msg, timeout_ms_)) {
             if (msg.ctype != rfb::kFtDirPacket) continue;
             if (msg.cparam == 0 && msg.length == 0) break;
             if (msg.length < 44) continue;  // directory echo
@@ -106,7 +107,7 @@ public:
         client_.send_ft(rfb::kFtFileTransferRequest, 0, 1, bytes(wire));  // 1 = offer compression
 
         FtMessage msg;
-        if (!client_.read_ft_message(msg, timeout_ms_) || msg.ctype != rfb::kFtFileHeader) {
+        if (!next_ft(msg, timeout_ms_) || msg.ctype != rfb::kFtFileHeader) {
             throw std::runtime_error("download: no file header for " + remote);
         }
         const uint32_t size = msg.size;
@@ -124,7 +125,7 @@ public:
 
         uint64_t done = 0;
         while (true) {
-            if (!client_.read_ft_message(msg, 60000)) {
+            if (!next_ft(msg, 60000)) {
                 throw std::runtime_error("download: timed out waiting for data");
             }
             if (msg.ctype == rfb::kFtFilePacket) {
@@ -159,7 +160,7 @@ public:
         client_.write_u32(0);  // sizeH
 
         FtMessage msg;
-        if (!client_.read_ft_message(msg, 30000) || msg.ctype != rfb::kFtFileAcceptHeader) {
+        if (!next_ft(msg, 30000) || msg.ctype != rfb::kFtFileAcceptHeader) {
             throw std::runtime_error("upload: no accept header");
         }
         if (msg.size == 0xFFFFFFFFu) {
@@ -183,7 +184,7 @@ public:
         // request so we know the server has consumed the packets and closed the file.
         client_.send_ft(rfb::kFtDirContentRequest, rfb::kFtRDrivesList, 0, {});
         FtMessage ack;
-        (void)client_.read_ft_message(ack, 10000);
+        (void)next_ft(ack, 10000);
     }
 
     void mkdir(const std::string& path) override {
@@ -196,13 +197,29 @@ public:
         const std::string wire = to_wire_path(from) + "*" + to_wire_path(to);
         client_.send_ft(rfb::kFtCommand, 5, 0, bytes(wire));
         FtMessage msg;
-        if (!client_.read_ft_message(msg, 15000) || msg.ctype != rfb::kFtCommandReturn ||
+        if (!next_ft(msg, 15000) || msg.ctype != rfb::kFtCommandReturn ||
             msg.cparam != 8 || msg.size != 0) {
             throw std::runtime_error("rename failed");
         }
     }
 
 private:
+    // UltraVNC 1.8+ advertises FileTransferProtocolVersion(17) and uses
+    // SessionStart/End(15/16); both are informational for us. Swallow them so
+    // the older request/reply state machines keep working.
+    bool next_ft(FtMessage& msg, int timeout) {
+        while (client_.read_ft_message(msg, timeout)) {
+            if (msg.ctype == rfb::kFtProtocolVersion) {
+                if (msg.cparam >= 1 && msg.cparam <= 4) ft_version_ = msg.cparam;
+                if (msg.size > 0) block_size_ = msg.size;
+                continue;
+            }
+            if (msg.ctype == rfb::kFtSessionStart || msg.ctype == rfb::kFtSessionEnd) continue;
+            return true;
+        }
+        return false;
+    }
+
     static std::vector<uint8_t> bytes(const std::string& s) {
         return std::vector<uint8_t>(s.begin(), s.end());
     }
@@ -211,7 +228,7 @@ private:
         const std::string wire = to_wire_path(payload);
         client_.send_ft(rfb::kFtCommand, param, 0, bytes(wire));
         FtMessage msg;
-        if (!client_.read_ft_message(msg, 15000) || msg.ctype != rfb::kFtCommandReturn) {
+        if (!next_ft(msg, 15000) || msg.ctype != rfb::kFtCommandReturn) {
             throw std::runtime_error(std::string(what) + ": no command reply");
         }
         if (msg.cparam != expected || msg.size != 0) {
@@ -222,6 +239,8 @@ private:
 
     RfbClient client_;
     int timeout_ms_ = 15000;
+    int ft_version_ = 2;
+    uint32_t block_size_ = 8192;
 };
 
 }  // namespace

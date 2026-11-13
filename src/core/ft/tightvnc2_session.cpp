@@ -71,9 +71,14 @@ public:
     bool supports_resume() const override { return true; }
 
     void ping() override {
-        // TightVNC 2.x does not advertise ECHO_REQUEST, so a harmless directory
-        // listing of the root is the cheapest round-trip that keeps the stream
-        // (and the shared zlib state) in sync.
+        // TightVNC 4.0+ advertises Echo; 2.x does not (sending it would drop the
+        // connection), so fall back to a harmless root listing.
+        if (client_.caps().hasClient(0xFC000300)) {
+            client_.write_u32(0xFC000300);
+            const uint32_t reply = client_.read_u32(5000);
+            if (reply != 0xFC000300) throw std::runtime_error("keepalive failed");
+            return;
+        }
         client_.write_u32(rfb::kTv2FileListRequest);
         client_.write_u8(compression_ ? 1 : 0);
         write_utf8("/");

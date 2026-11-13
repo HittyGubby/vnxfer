@@ -106,6 +106,7 @@ char cFileName[...]        // 从偏移 44 开始
 - C→15 / 16 SessionStart / SessionEnd（v3+）。
 - v4：目录请求 `contentParam |= 0x8000` 表示支持 Unicode 目录项；条目中 `rfbADirUnicode` 标志；新增 `rfbADirInaccessible(18)`。
 - 客户端策略：收到 17 才启用新行为，否则按 v2（读 4 字节 sizeH、ANSI 路径）。
+- 当前实现：next_ft() 会吞掉 17（记录版本与块大小）和 15/16，其余消息照旧处理；权限探测同样跳过这三类，避免把版本通告误判成非 UltraVNC。目录请求仍不带 0x8000，服务端继续返回 ANSI 的 WIN32_FIND_DATA。
 
 ---
 
@@ -172,6 +173,10 @@ flags: 0x1 目录, 0x2 可执行
 失败：S 0x119(UTF8 msg)
 ```
 
+### 3.7 心跳
+
+- TightVNC 4.0 起才在 caps 里宣告 Echo（0xFC000300）。2.x 收到 ECHO_REQUEST 会直接断开，因此客户端必须先查 caps：有 Echo 发 Echo，否则退回根目录列表请求（顺带推进共享 zlib 流状态）。
+
 ---
 
 ## 4. TightVNC 1.3（消息 130–136）
@@ -210,7 +215,8 @@ FileCreateDirReq  (C 136): u8 type, u8 unused, u16 dirNameSize, name[]
 |---|---|---|
 | UltraVNC | S→17 消息 | 收到：按 contentParam 用 v3/v4 行为；未收到：按 v2（sizeH、ANSI） |
 | UltraVNC ≤RC18 | 权限探测回 `7`（Abort）而非 `14` | 无 sizeH，路径/大小按 v1 |
-| TightVNC 2.x | InteractionCaps 里出现 0xFC0001xx | 有 0x104 → 可断点续传；无 0x100 → 关压缩 |
+| TightVNC 2.x / 4.x | InteractionCaps 里出现 0xFC0001xx | 有 0x104 → 可断点续传；无 0x100 → 关压缩；有 0xFC000300 → 用 Echo 心跳 |
+| UltraVNC 1.8+ | S→17（contentParam=版本，size=块大小） | 记录版本，吞掉 15/16，其余按 v2 处理 |
 | TightVNC 1.3 | InteractionCaps 里出现 130–135 | 走 FTS 后端 |
 | 无 FT | 无上述任何信号，或 FT 请求后断开 | 明确报"服务端未启用文件传输"，不要重试 |
 
