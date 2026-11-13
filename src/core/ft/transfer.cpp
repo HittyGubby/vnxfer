@@ -45,7 +45,14 @@ public:
         if (progress_) progress_(done_, total_);
     }
     void finish() {
-        if (progress_ && total_ == 0) progress_(done_, done_);
+        if (!progress_) return;
+        if (total_ == 0) {
+            // An empty tree still needs a terminal event; the GUI treats a
+            // (0, 0) pair as "finished" only after this call.
+            progress_(1, 1);
+        } else {
+            progress_(total_, total_);
+        }
     }
 
 private:

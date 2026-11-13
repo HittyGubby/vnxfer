@@ -1048,7 +1048,8 @@ void MainWindow::onProgress(quint64 done, quint64 total) {
 void MainWindow::onFinished(const QString& what) {
     setBusy(false);
     status_->setText(what + " done");
-    progress_->setValue(0);
+    progress_->setRange(0, 1000);
+    progress_->setValue(1000);
     // Refresh only the directory that changed so expanded branches stay open.
     QString changedDir;
     if (what == "upload") {
@@ -1073,6 +1074,7 @@ void MainWindow::onFinished(const QString& what) {
 
 void MainWindow::onFailed(const QString& what, const QString& message) {
     setBusy(false);
+    progress_->setRange(0, 1000);
     progress_->setValue(0);
     status_->setText(what + " failed");
     if (what == "keepalive") {
