@@ -21,7 +21,11 @@ uint32_t le32(const uint8_t* p) {
 std::string time_suffix() {
     std::time_t now = std::time(nullptr);
     std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &now);
+#else
     localtime_r(&now, &tm);
+#endif
     char buf[32];
     std::strftime(buf, sizeof(buf), "%m/%d/%Y %H:%M", &tm);
     return buf;

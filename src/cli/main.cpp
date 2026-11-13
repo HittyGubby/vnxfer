@@ -91,7 +91,11 @@ std::string fmt_time(int64_t t) {
     if (t <= 0) return "-";
     std::time_t tt = static_cast<std::time_t>(t);
     std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &tt);
+#else
     localtime_r(&tt, &tm);
+#endif
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
     return buf;

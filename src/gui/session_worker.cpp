@@ -20,10 +20,9 @@ SessionWorker::~SessionWorker() = default;
 
 bool SessionWorker::reconnect() {
     try {
+        // Silent reconnect: the UI keeps its tree and current directory, and a
+        // failed transfer must not collapse the browser.
         session_ = vnxfer::open_session(options_);
-        emit connected(QString::fromStdString(session_->describe()),
-                       QString::fromStdString(session_->default_root()));
-        emit capabilitiesReady(QString::fromStdString(session_->capabilities()));
         return true;
     } catch (const std::exception&) {
         session_.reset();
